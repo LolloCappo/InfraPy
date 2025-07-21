@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sdypy-template"
+version = "0.1.0"
+authors = [{name = "Janko Slavič et al.", email = "janko.slavic@fs.uni-lj.si"}]
+maintainers = [{name = "Janko Slavič et al.", email = "janko.slavic@fs.uni-lj.si"}]
+license = "MIT"
+description = "A template for SDyPy projects."
+readme = "README.rst"
+keywords = ["sdypy", "template"]
+requires-python = ">=3.10"
+
+# Dependency management (these must be installed for the package to work)
+dependencies = [
+    "numpy>=1.11.0",
+    "scipy>=1.2.0",
+    "matplotlib>=3.0.0",
+    "pyMRAW>=0.2.0",
+    "tqdm>=4.25.0",
+]
+
+classifiers = [
+    'Development Status :: 5 - Production/Stable',
+    'Intended Audience :: Developers',
+    'Topic :: Scientific/Engineering',
+    'Programming Language :: Python :: 3.10',
+    "License :: OSI Approved :: MIT License",
+]
+
+# Optional dependencies (can be installed with `pip install sdypy-template[dev]`).
+# Can add as many as you want, but they must be listed in the `optional-dependencies` section.
+[project.optional-dependencies]
+dev = [
+    "sphinx",
+    "twine",
+    "wheel",
+    "pytest",
+    "build",
+    "sphinx-rtd-theme",
+    "sphinx-copybutton>=0.5.2",
+]
+
+[project.urls]
+homepage = "https://github.com/sdypy/sdypy_template_project"
+documentation = "https://github.com/sdypy/sdypy_template_project"
+source = "https://github.com/sdypy/sdypy_template_project"
+
+# Define the files that are included in the wheel
+[tool.hatch.build.targets.wheel]
+include = ["sdypy_template_project/*"]
+
+# Define the files that are included in the source distribution (tar.gz)
+[tool.hatch.build.targets.sdist]
+include = [
+    "sdypy_template_project/*"
+]
