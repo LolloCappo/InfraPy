@@ -38,7 +38,7 @@ Or install from source:
     cd infrapy
     pip install -e .
 
-Project Structure
+Library Structure
 -----------------
 
 .. code-block:: text
@@ -64,7 +64,6 @@ Planned Extensions
 - TSA calibration routines for absolute stress estimation
 - Thermal anomaly detection tools
 - GUI frontend for interactive workflows
-- Built-in batch ROI analysis and CSV export
 
 Getting Started
 ---------------
