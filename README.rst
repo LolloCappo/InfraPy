@@ -1,5 +1,24 @@
 InfraPy: Infrared Image Processing and Thermographic Analysis in Python
 ========================================================================
+.. image:: https://img.shields.io/badge/license-MIT-blue.svg
+   :target: https://opensource.org/licenses/MIT
+   :alt: License: MIT
+
+.. image:: https://img.shields.io/pypi/v/infrapy.svg
+   :target: https://pypi.org/project/infrapy/
+   :alt: PyPI version
+
+.. image:: https://img.shields.io/pypi/pyversions/infrapy.svg
+   :target: https://pypi.org/project/infrapy/
+   :alt: Python versions
+
+.. image:: https://img.shields.io/github/issues/yourusername/infrapy
+   :target: https://github.com/yourusername/infrapy/issues
+   :alt: GitHub issues
+
+.. image:: https://img.shields.io/github/stars/yourusername/infrapy?style=social
+   :target: https://github.com/yourusername/infrapy
+   :alt: GitHub stars
 
 **InfraPy** is a modular Python library for infrared image analysis, with a strong foundation in thermography and thermoelastic stress analysis (TSA). It provides a clean and extensible structure for processing, analyzing, and visualizing infrared data, while remaining open to future expansions beyond TSA and classical thermography.
 
