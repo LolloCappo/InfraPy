@@ -60,13 +60,10 @@ Project Structure
     │   ├── plots.py                # Plot signals, maps, profiles
     │   └── animation.py            # Animate sequences of IR data
     ├── analysis/
-    │   ├── time_domain/
-    │   │   ├── thermography.py     # Classical temperature field tracking
-    │   │   └── spatial_features.py # Gradients, contrast-based maps
-    │   ├── frequency_domain/
+    │   │   ├── thermography.py          # Classical temperature field tracking
+    │   │   ├── spatial_features.py      # Gradients, contrast-based maps
     │   │   ├── thermoelastic_stress.py  # TSA: lock-in amplitude/phase
     │   │   └── adaptive_lockin.py       # Auto-detecting lock-in frequency
-    │   └── utilities.py           # Shared tools: windowing, correlation, etc.
     ├── utils.py                   # General-purpose utilities:
     │                              #  - Unit conversions
     │                              #  - Signal-to-noise ratio
@@ -75,9 +72,8 @@ Project Structure
     ├── gui/                       # GUI frontend module
     ├── cli/                       # CLI interface tools
     ├── examples/                  # Jupyter notebooks and usage demos
-    ├── tests/                     # Unit and integration tests
-    ├── pyproject.toml             # Build & dependency configuration
-    └── README.rst                 # This file
+    └── tests/                     # Unit and integration tests
+
 
 Planned Extensions
 ------------------
