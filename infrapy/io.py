@@ -1,5 +1,6 @@
 from pathlib import Path
 import numpy as np
+import sdypy.io.sfmov as sfmov
 import tifffile
 import imageio.v2 as imageio  # safe image reader
 
@@ -47,6 +48,7 @@ def load_sequence(path):
     Load a sequence of infrared frames (3D array: frames, height, width).
 
     Supports:
+    - SFMOV files (Typical from Flir IR cameras)
     - Multi-frame TIFF
     - .npy or .npz files (with 3D arrays)
     - Folder of .png images (alphabetical order)
@@ -81,7 +83,13 @@ def load_sequence(path):
         if stack.ndim != 3:
             raise ValueError("Expected multi-frame TIFF (3D array).")
         return stack.astype(np.float32)
-
+    
+    elif path.suffix in [".sfmov"]:
+        stack = sfmov.get_data(path)  
+        if stack.ndim != 3:
+            raise ValueError("Expected multi-frame TIFF (3D array).")
+        return stack.astype(np.float32)
+    
     else:
         raise ValueError(f"Unsupported sequence format: {path.suffix}")
 
