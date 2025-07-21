@@ -1,43 +1,96 @@
-import numpy as np
-import imageio
-import os
-import tifffile
 from pathlib import Path
+import numpy as np
+import tifffile
+import imageio.v2 as imageio  # safe image reader
 
-def read_array(filepath):
-    """Reads a .npy or .npz NumPy array."""
+def load_snapshot(filepath):
+    """
+    Load a single infrared snapshot as a 2D NumPy array.
+
+    Supports:
+    - Single-frame TIFF
+    - Single .npy file
+    - Single .png/.jpg/.bmp image
+
+    Returns:
+        2D NumPy array
+    """
     filepath = Path(filepath)
-    if filepath.suffix == ".npy":
-        return np.load(filepath)
-    elif filepath.suffix == ".npz":
-        return dict(np.load(filepath))
+
+    if not filepath.exists():
+        raise FileNotFoundError(f"File not found: {filepath}")
+
+    if filepath.suffix in [".npy"]:
+        array = np.load(filepath)
+        if array.ndim != 2:
+            raise ValueError("Expected a 2D array for snapshot.")
+        return array
+
+    elif filepath.suffix in [".tif", ".tiff"]:
+        img = tifffile.imread(filepath)
+        if img.ndim != 2:
+            raise ValueError("Expected a single-frame TIFF (2D array).")
+        return img
+
+    elif filepath.suffix.lower() in [".png", ".jpg", ".jpeg", ".bmp"]:
+        img = imageio.imread(filepath)
+        if img.ndim != 2:
+            raise ValueError("Expected grayscale image for IR snapshot.")
+        return img.astype(np.float32)
+
     else:
-        raise ValueError(f"Unsupported NumPy file format: {filepath.suffix}")
+        raise ValueError(f"Unsupported snapshot format: {filepath.suffix}")
 
-def read_tiff_stack(filepath):
-    """Reads a multi-frame TIFF stack."""
-    return tifffile.imread(filepath)
 
-def read_image_sequence(folder_path, extension=".png"):
-    """Reads a folder of images as a 3D array (frames, height, width)."""
-    folder = Path(folder_path)
-    files = sorted(folder.glob(f"*{extension}"))
-    if not files:
-        raise FileNotFoundError(f"No {extension} files found in {folder}")
-    return np.stack([imageio.imread(file) for file in files], axis=0)
+def load_sequence(path):
+    """
+    Load a sequence of infrared frames (3D array: frames, height, width).
 
-def read_file(filepath):
-    """General-purpose reader that routes to appropriate format handler."""
-    filepath = Path(filepath)
-    if filepath.suffix in [".npy", ".npz"]:
-        return read_array(filepath)
-    elif filepath.suffix.lower() in [".tif", ".tiff"]:
-        return read_tiff_stack(filepath)
+    Supports:
+    - Multi-frame TIFF
+    - .npy or .npz files (with 3D arrays)
+    - Folder of .png images (alphabetical order)
+
+    Returns:
+        3D NumPy array (frames, height, width)
+    """
+    path = Path(path)
+
+    if path.is_dir():
+        files = sorted(path.glob("*.png"))
+        if not files:
+            raise FileNotFoundError("No image files (.png) found in folder.")
+        stack = np.stack([imageio.imread(f).astype(np.float32) for f in files], axis=0)
+        return stack
+
+    elif path.suffix in [".npy", ".npz"]:
+        data = np.load(path)
+        if isinstance(data, np.lib.npyio.NpzFile):
+            # Look for a key with 3D data
+            for key in data:
+                if data[key].ndim == 3:
+                    return data[key]
+            raise ValueError("No 3D array found in .npz file.")
+        elif isinstance(data, np.ndarray) and data.ndim == 3:
+            return data
+        else:
+            raise ValueError("Expected a 3D array in .npy/.npz file.")
+
+    elif path.suffix in [".tif", ".tiff"]:
+        stack = tifffile.imread(path)
+        if stack.ndim != 3:
+            raise ValueError("Expected multi-frame TIFF (3D array).")
+        return stack.astype(np.float32)
+
     else:
-        raise ValueError(f"Unsupported file format: {filepath.suffix}")
+        raise ValueError(f"Unsupported sequence format: {path.suffix}")
 
+
+# Optional: Aliases for saving
 def save_array(data, filepath):
-    """Save a NumPy array to .npy or .npz."""
+    """
+    Save a 2D or 3D NumPy array to .npy or .npz format.
+    """
     filepath = Path(filepath)
     if filepath.suffix == ".npy":
         np.save(filepath, data)
@@ -45,28 +98,6 @@ def save_array(data, filepath):
         if isinstance(data, dict):
             np.savez(filepath, **data)
         else:
-            raise ValueError("For .npz, input must be a dict of arrays.")
+            raise ValueError("For .npz, data must be a dict of arrays.")
     else:
-        raise ValueError(f"Unsupported NumPy file format: {filepath.suffix}")
-
-def save_tiff_stack(data, filepath):
-    """Save a 3D array (frames, H, W) as a TIFF stack."""
-    tifffile.imwrite(filepath, data)
-
-def save_image_sequence(data, folder_path, prefix="frame", extension=".png"):
-    """Save 3D array (frames, H, W) to image sequence."""
-    folder = Path(folder_path)
-    folder.mkdir(parents=True, exist_ok=True)
-    for i, frame in enumerate(data):
-        filename = folder / f"{prefix}_{i:04d}{extension}"
-        imageio.imwrite(filename, frame.astype(np.uint8))
-
-def save_file(data, filepath):
-    """General-purpose saver."""
-    filepath = Path(filepath)
-    if filepath.suffix in [".npy", ".npz"]:
-        save_array(data, filepath)
-    elif filepath.suffix in [".tif", ".tiff"]:
-        save_tiff_stack(data, filepath)
-    else:
-        raise ValueError(f"Unsupported file format for saving: {filepath.suffix}")
+        raise ValueError(f"Unsupported format: {filepath.suffix}")
