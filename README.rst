@@ -44,35 +44,18 @@ Project Structure
 .. code-block:: text
 
     infrapy/
-    ├── io/
-    │   ├── readers.py              # Load IR data from files
-    │   └── writers.py              # Save processed data and results
-    ├── temperature/
-    │   ├── emissivity.py           # Emissivity corrections
-    │   └── calibration.py          # Radiometric ↔ temperature scaling
-    ├── preprocessing/
-    │   ├── detrending.py           # Remove temporal drift
-    │   ├── filters.py              # Temporal/spatial filters
-    │   ├── normalization.py        # Normalize across time or space
-    │   └── cropping.py             # Spatial/temporal cropping
-    ├── visualization/
-    │   ├── roi.py                  # Define ROIs (point, line, area)
-    │   ├── plots.py                # Plot signals, maps, profiles
-    │   └── animation.py            # Animate sequences of IR data
-    ├── analysis/
-    │   │   ├── thermography.py          # Classical temperature field tracking
-    │   │   ├── spatial_features.py      # Gradients, contrast-based maps
-    │   │   ├── thermoelastic_stress.py  # TSA: lock-in amplitude/phase
-    │   │   └── adaptive_lockin.py       # Auto-detecting lock-in frequency
-    ├── utils.py                   # General-purpose utilities:
-    │                              #  - Unit conversions
-    │                              #  - Signal-to-noise ratio
-    │                              #  - Frame resampling
-    │                              #  - Frame sequence helpers
-    ├── gui/                       # GUI frontend module
-    ├── cli/                       # CLI interface tools
-    ├── examples/                  # Jupyter notebooks and usage demos
-    └── tests/                     # Unit and integration tests
+    ├── io.py              # Load IR data from files and save results
+    ├── emissivity.py           # Emissivity corrections
+    ├── preprocessing.py        # Detrending, filters, normalization, cropping
+    ├── visualization.py        # Visualization tools
+    ├── thermography.py         # Classical temperature field tracking
+    │── spatial_features.py     # Gradients, contrast-based maps
+    ├── thermoelastic_stress.py # TSA: lock-in amplitude/phase
+    ├── utils.py                # General-purpose utilities
+    ├── gui/                    # GUI frontend module
+    ├── cli/                    # CLI interface tools
+    ├── examples/               # Jupyter notebooks and usage demos
+    └── tests/                  # Unit and integration tests
 
 
 Planned Extensions
