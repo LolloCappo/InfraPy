@@ -44,7 +44,7 @@ dev = [
 [project.urls]
 homepage = "https://github.com/lollocappo/infrapy"
 documentation = "https://github.com/lollocappo/infrapy"
-source = "https://github.com/sdypy/sdypy_template_project"
+source = "https://github.com/lollocappo/infrapy"
 
 # Define the files that are included in the wheel
 [tool.hatch.build.targets.wheel]
