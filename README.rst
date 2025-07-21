@@ -107,6 +107,6 @@ MIT License
 Contact
 -------
 
-Project Lead: Giulio Tribbiani  
-Email: *your-email@example.com*  
-GitHub: https://github.com/yourusername/infrapy
+Project Lead: Lorenzo Capponi
+Email: lorenzocapponi@outlook.it
+GitHub: https://github.com/LolloCappo/infrapy
