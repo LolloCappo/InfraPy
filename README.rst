@@ -12,7 +12,7 @@ Features
 - 🌡️ **Temperature tools**: emissivity correction, radiometric-to-temperature conversion
 - 🔧 **Preprocessing**: detrending, filtering, normalization, cropping
 - 📊 **Visualization**: ROI monitoring, line profiles, area averages, video animation
-- ⏱️ **Time-domain analysis**: temperature monitoring, thermal contrast, basic ROI tracking
+- ⏱️ **Time-domain analysis**: temperature monitoring, basic ROI tracking
 - 📉 **Frequency-domain analysis**: TSA lock-in, adaptive lock-in, amplitude and phase mapping
 - 🧰 **Utility tools**: windowing, unit conversion, SNR calculation, resampling
 - 🧩 **Modular design**: clean architecture to support GUI/CLI integration and future analysis modules
@@ -30,7 +30,7 @@ Or install from source:
 
 .. code-block:: bash
 
-    git clone https://github.com/yourusername/infrapy.git
+    git clone https://github.com/LolloCappo/infrapy.git
     cd infrapy
     pip install -e .
 
@@ -68,8 +68,8 @@ Project Structure
     │                              #  - Signal-to-noise ratio
     │                              #  - Frame resampling
     │                              #  - Frame sequence helpers
-    ├── gui/                       # (Placeholder) GUI frontend module
-    ├── cli/                       # (Placeholder) CLI interface tools
+    ├── gui/                       # GUI frontend module
+    ├── cli/                       # CLI interface tools
     ├── examples/                  # Jupyter notebooks and usage demos
     ├── tests/                     # Unit and integration tests
     ├── pyproject.toml             # Build & dependency configuration
@@ -82,7 +82,6 @@ Planned Extensions
 - 🖼️ Thermal anomaly detection tools
 - 🎛️ GUI frontend for interactive workflows
 - 🔁 Built-in batch ROI analysis and CSV export
-- 🧭 Synchronization tools for multi-sensor integration
 
 Getting Started
 ---------------
