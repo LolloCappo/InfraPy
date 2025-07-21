@@ -12,5 +12,3 @@ def test_version():
 
 class TestCore:
     """ Testing core functions """
-
-    def test_roi_xy(self):
