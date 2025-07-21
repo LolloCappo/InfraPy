@@ -44,7 +44,7 @@ Project Structure
 .. code-block:: text
 
     infrapy/
-    ├── io.py              # Load IR data from files and save results
+    ├── io.py                   # Load IR data from files and save results
     ├── emissivity.py           # Emissivity corrections
     ├── preprocessing.py        # Detrending, filters, normalization, cropping
     ├── visualization.py        # Visualization tools
