@@ -1,4 +1,4 @@
-.. image:: data/logo.png
+.. image:: logo.png
    :alt: InfraPy Logo
    :align: center
    :width: 300px
