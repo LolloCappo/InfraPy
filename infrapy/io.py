@@ -93,8 +93,6 @@ def load_sequence(path):
     else:
         raise ValueError(f"Unsupported sequence format: {path.suffix}")
 
-
-# Optional: Aliases for saving
 def save_array(data, filepath):
     """
     Save a 2D or 3D NumPy array to .npy or .npz format.
