@@ -7,14 +7,14 @@ The library is designed to serve research, engineering, and diagnostic applicati
 Features
 --------
 
-- 📥 **Flexible input support**: image stacks, video files, NumPy arrays, CSV
-- 🌡️ **Temperature tools**: emissivity correction, radiometric-to-temperature conversion
-- 🔧 **Preprocessing**: detrending, filtering, normalization, cropping
-- 📊 **Visualization**: ROI monitoring, line profiles, area averages, video animation
-- ⏱️ **Time-domain analysis**: temperature monitoring, basic ROI tracking
-- 📉 **Frequency-domain analysis**: TSA lock-in, adaptive lock-in, amplitude and phase mapping
-- 🧰 **Utility tools**: windowing, unit conversion, SNR calculation, resampling
-- 🧩 **Modular design**: clean architecture to support GUI/CLI integration and future analysis modules
+-  **Flexible input support**: image stacks, video files, NumPy arrays, CSV
+-  **Temperature tools**: emissivity correction, radiometric-to-temperature conversion
+-  **Preprocessing**: detrending, filtering, normalization, cropping
+-  **Visualization**: ROI monitoring, line profiles, area averages, video animation
+-  **Time-domain analysis**: temperature monitoring, basic ROI tracking
+-  **Frequency-domain analysis**: TSA lock-in, adaptive lock-in, amplitude and phase mapping
+-  **Utility tools**: windowing, unit conversion, SNR calculation, resampling
+-  **Modular design**: clean architecture to support GUI/CLI integration and future analysis modules
 
 Installation
 ------------
@@ -77,10 +77,10 @@ Project Structure
 Planned Extensions
 ------------------
 
-- 🧪 TSA calibration routines for absolute stress estimation
-- 🖼️ Thermal anomaly detection tools
-- 🎛️ GUI frontend for interactive workflows
-- 🔁 Built-in batch ROI analysis and CSV export
+- TSA calibration routines for absolute stress estimation
+- Thermal anomaly detection tools
+- GUI frontend for interactive workflows
+- Built-in batch ROI analysis and CSV export
 
 Getting Started
 ---------------
