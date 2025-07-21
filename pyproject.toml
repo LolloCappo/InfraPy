@@ -3,12 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sdypy-template"
+name = "InfraPy"
 version = "0.1.0"
-authors = [{name = "Janko Slavič et al.", email = "janko.slavic@fs.uni-lj.si"}]
-maintainers = [{name = "Janko Slavič et al.", email = "janko.slavic@fs.uni-lj.si"}]
+authors = [{name = "Lorenzo Capponi et al.", email = "lorenzocapponi@outlook.it"}]
+maintainers = [{name = "Lorenzo Capponi et al.", email = "lorenzocapponi@outlook.it"}]
 license = "MIT"
-description = "A template for SDyPy projects."
+description = "Infared Image Processing"
 readme = "README.rst"
 keywords = ["sdypy", "template"]
 requires-python = ">=3.10"
@@ -17,9 +17,7 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.11.0",
     "scipy>=1.2.0",
-    "matplotlib>=3.0.0",
-    "pyMRAW>=0.2.0",
-    "tqdm>=4.25.0",
+    "matplotlib>=3.0.0"
 ]
 
 classifiers = [
@@ -30,7 +28,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 
-# Optional dependencies (can be installed with `pip install sdypy-template[dev]`).
+# Optional dependencies (can be installed with `pip install infrapy[dev]`).
 # Can add as many as you want, but they must be listed in the `optional-dependencies` section.
 [project.optional-dependencies]
 dev = [
@@ -44,16 +42,16 @@ dev = [
 ]
 
 [project.urls]
-homepage = "https://github.com/sdypy/sdypy_template_project"
-documentation = "https://github.com/sdypy/sdypy_template_project"
+homepage = "https://github.com/lollocappo/infrapy"
+documentation = "https://github.com/lollocappo/infrapy"
 source = "https://github.com/sdypy/sdypy_template_project"
 
 # Define the files that are included in the wheel
 [tool.hatch.build.targets.wheel]
-include = ["sdypy_template_project/*"]
+include = ["infrapy/*"]
 
 # Define the files that are included in the source distribution (tar.gz)
 [tool.hatch.build.targets.sdist]
 include = [
-    "sdypy_template_project/*"
+    "infrapy/*"
 ]
