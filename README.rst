@@ -50,7 +50,7 @@ Project Structure
     ├── visualization.py        # Visualization tools
     ├── thermography.py         # Classical temperature field tracking
     │── spatial_features.py     # Gradients, contrast-based maps
-    ├── thermoelastic_stress.py # TSA: lock-in amplitude/phase
+    ├── thermoelasticity.py     # Thermoelastic stress analysis
     ├── utils.py                # General-purpose utilities
     ├── gui/                    # GUI frontend module
     ├── cli/                    # CLI interface tools
