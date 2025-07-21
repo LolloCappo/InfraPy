@@ -3,7 +3,7 @@
    :align: center
    :width: 300px
 
-InfraPy: Infrared Image Processing in Python
+Infrared Image Processing in Python
 =============================================
 **InfraPy** is a modular Python library for infrared image analysis. It provides a clean and extensible structure for processing, analyzing, and visualizing infrared data.
 
