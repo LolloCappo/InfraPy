@@ -1,7 +1,7 @@
 .. image:: logo.png
    :alt: InfraPy Logo
    :align: center
-   :width: 300px
+   :width: 600px
 
 InfraPy: Infrared Image Processing in Python
 =============================================
