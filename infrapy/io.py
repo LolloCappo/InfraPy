@@ -1,109 +1,104 @@
 from pathlib import Path
 import numpy as np
-import sdypy.io.sfmov as sfmov
 import tifffile
-import imageio.v2 as imageio  # safe image reader
+import imageio.v2 as imageio  # not used but kept for completeness
+import sdypy.io.sfmov as sfmov
 
-def load_snapshot(filepath):
+def load_ir_data(path):
     """
-    Load a single infrared snapshot as a 2D NumPy array.
+    Load infrared data from supported formats:
+    - Single or multi-frame TIFF, CSV, SFMOV, NPY, NPZ
+    - Folder of TIFF, CSV, or SFMOV files (each treated as 1 frame)
 
-    Supports:
-    - Single-frame TIFF
-    - Single .npy file
-    - Single .png/.jpg/.bmp image
-
-    Returns:
-        2D NumPy array
-    """
-    filepath = Path(filepath)
-
-    if not filepath.exists():
-        raise FileNotFoundError(f"File not found: {filepath}")
-
-    if filepath.suffix in [".npy"]:
-        array = np.load(filepath)
-        if array.ndim != 2:
-            raise ValueError("Expected a 2D array for snapshot.")
-        return array
-
-    elif filepath.suffix in [".tif", ".tiff"]:
-        img = tifffile.imread(filepath)
-        if img.ndim != 2:
-            raise ValueError("Expected a single-frame TIFF (2D array).")
-        return img
-
-    elif filepath.suffix.lower() in [".png", ".jpg", ".jpeg", ".bmp"]:
-        img = imageio.imread(filepath)
-        if img.ndim != 2:
-            raise ValueError("Expected grayscale image for IR snapshot.")
-        return img.astype(np.float32)
-
-    else:
-        raise ValueError(f"Unsupported snapshot format: {filepath.suffix}")
-
-
-def load_sequence(path):
-    """
-    Load a sequence of infrared frames (3D array: frames, height, width).
-
-    Supports:
-    - SFMOV files (Typical from Flir IR cameras)
-    - Multi-frame TIFF
-    - .npy or .npz files (with 3D arrays)
-    - Folder of .png images (alphabetical order)
-
-    Returns:
-        3D NumPy array (frames, height, width)
+    Always returns:
+        ndarray: 3D array with shape (num_frames, height, width)
     """
     path = Path(path)
 
-    if path.is_dir():
-        files = sorted(path.glob("*.png"))
-        if not files:
-            raise FileNotFoundError("No image files (.png) found in folder.")
-        stack = np.stack([imageio.imread(f).astype(np.float32) for f in files], axis=0)
-        return stack
+    def ensure_3d(arr):
+        """Make sure output is always (frames, height, width)"""
+        arr = arr.astype(np.float32)
+        if arr.ndim == 2:
+            return arr[np.newaxis, ...]
+        elif arr.ndim == 3:
+            return arr
+        else:
+            raise ValueError(f"Unsupported array shape: {arr.shape}")
 
-    elif path.suffix in [".npy", ".npz"]:
+    if path.is_dir():
+        # Folder: look for tiff, csv, sfmov files
+        files = sorted(
+            f for f in path.iterdir()
+            if f.suffix.lower() in [".tif", ".tiff", ".csv", ".sfmov"]
+        )
+        if not files:
+            raise FileNotFoundError(f"No supported files found in folder: {path}")
+
+        frames = []
+        for f in files:
+            suffix = f.suffix.lower()
+            if suffix in [".tif", ".tiff"]:
+                img = tifffile.imread(f)
+                img = ensure_3d(img)
+                frames.extend(img)
+            elif suffix == ".csv":
+                arr = np.loadtxt(f, delimiter=',')
+                arr = ensure_3d(arr)
+                frames.append(arr[0])  # single CSV is one frame
+            elif suffix == ".sfmov":
+                arr = sfmov.get_data(f)
+                arr = ensure_3d(arr)
+                frames.extend(arr)
+            else:
+                raise ValueError(f"Unsupported file in folder: {f}")
+        return np.stack(frames, axis=0)
+
+    # Single file
+    suffix = path.suffix.lower()
+
+    if suffix in [".tif", ".tiff"]:
+        arr = tifffile.imread(path)
+        return ensure_3d(arr)
+
+    elif suffix == ".csv":
+        arr = np.loadtxt(path, delimiter=',')
+        return ensure_3d(arr)
+
+    elif suffix == ".sfmov":
+        arr = sfmov.get_data(path)
+        return ensure_3d(arr)
+
+    elif suffix in [".npy", ".npz"]:
         data = np.load(path)
         if isinstance(data, np.lib.npyio.NpzFile):
-            # Look for a key with 3D data
             for key in data:
-                if data[key].ndim == 3:
-                    return data[key]
-            raise ValueError("No 3D array found in .npz file.")
-        elif isinstance(data, np.ndarray) and data.ndim == 3:
-            return data
+                arr = data[key]
+                return ensure_3d(arr)
+            raise ValueError("No arrays found in .npz file.")
         else:
-            raise ValueError("Expected a 3D array in .npy/.npz file.")
+            return ensure_3d(data)
 
-    elif path.suffix in [".tif", ".tiff"]:
-        stack = tifffile.imread(path)
-        if stack.ndim != 3:
-            raise ValueError("Expected multi-frame TIFF (3D array).")
-        return stack.astype(np.float32)
-    
-    elif path.suffix in [".sfmov"]:
-        stack = sfmov.get_data(path)  
-        if stack.ndim != 3:
-            raise ValueError("Expected multi-frame TIFF (3D array).")
-        return stack.astype(np.float32)
-    
     else:
-        raise ValueError(f"Unsupported sequence format: {path.suffix}")
+        raise ValueError(f"Unsupported file type: {suffix}")
 
-def save_array(data, filepath):
+def save_ir_data(array, filepath, key="data"):
     """
-    Save a 2D or 3D NumPy array to .npy or .npz format.
+    Save a NumPy array to .npy or .npz format.
+
+    Args:
+        array (np.ndarray): The array to save (2D or 3D).
+        filepath (str or Path): Destination file path (.npy or .npz).
+        key (str): Key name to use if saving to .npz (default: "data").
+
+    Raises:
+        ValueError: If file extension is not .npy or .npz.
     """
     filepath = Path(filepath)
-    if filepath.suffix == ".npy":
-        np.save(filepath, data)
-    elif filepath.suffix == ".npz":
-        if isinstance(data, dict):
-            np.savez(filepath, **data)
-        else:
-            raise ValueError("For .npz, data must be a dict of arrays.")
+    suffix = filepath.suffix.lower()
+
+    if suffix == ".npy":
+        np.save(filepath, array)
+    elif suffix == ".npz":
+        np.savez_compressed(filepath, **{key: array})
     else:
-        raise ValueError(f"Unsupported format: {filepath.suffix}")
+        raise ValueError(f"Unsupported file format for saving: {suffix}. Use .npy or .npz.")

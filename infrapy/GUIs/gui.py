@@ -1,65 +1,60 @@
-from nicegui import ui
+import napari
+from magicgui import magicgui
+from qtpy.QtWidgets import QFileDialog, QProgressBar
 from pathlib import Path
 import sys
-import time
-import tempfile
+import os
 
-# Add your InfraPy source root
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-from infrapy.io import load_snapshot, load_sequence
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from infrapy import io
 
+# Create the viewer
+viewer = napari.Viewer()
+viewer.window._qt_viewer.setWindowTitle("InfraPy")
+viewer.theme = "light"
 
-progress = ui.linear_progress(show_value=True).props('instant-feedback')
-file_label = ui.label("No file uploaded yet.")
+# Add a progress bar below the dock
+progress_bar = QProgressBar()
+progress_bar.setRange(0, 100)
+progress_bar.setValue(0)
+progress_bar.setVisible(False)  # Only show during loading
 
+@magicgui(call_button="Load IR Data")
+def data_loader_widget():
+    dialog = QFileDialog()
+    dialog.setFileMode(QFileDialog.AnyFile)
+    dialog.setAcceptMode(QFileDialog.AcceptOpen)
+    dialog.setNameFilter("IR Files (*.tif *.tiff *.csv *.sfmov *.npy *.npz);;All files (*)")
 
-def handle_file_upload(e):
-    """Triggered when a file is uploaded."""
-    try:
-        content = e.content.read()
+    if dialog.exec_():
+        selected = dialog.selectedFiles()[0]
+        path = Path(selected)
 
-        # Save to a temporary file
-        suffix = Path(e.name).suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(content)
-            uploaded_path = Path(tmp.name)
+        try:
+            progress_bar.setVisible(True)
+            progress_bar.setValue(10)
 
-        file_label.set_text(f"Uploaded: {e.name}")
-        load_and_report(uploaded_path)
+            data = io.load_ir_data(path)
 
-    except Exception as ex:
-        ui.notify(f"Upload failed: {str(ex)}", color="negative")
+            progress_bar.setValue(90)
 
+            name = path.stem if path.is_file() else path.name
+            if data.shape[0] == 1:
+                viewer.add_image(data[0], name=name, colormap="inferno")
+            else:
+                viewer.add_image(data, name=name, colormap="inferno")
 
-def load_and_report(path: Path):
-    """Load the file and show progress."""
-    try:
-        progress.set_value(0.1)
-        ui.notify("Loading started...", color="info")
-        time.sleep(0.2)
+            progress_bar.setValue(100)
 
-        if path.suffix.lower() in [".tif", ".tiff", ".npy", ".npz"]:
-            data = load_sequence(path)
-        else:
-            data = load_snapshot(path)
+        except Exception as e:
+            print(f"❌ Failed to load {path}: {e}")
+        finally:
+            progress_bar.setVisible(False)
+            progress_bar.setValue(0)
 
-        dims = data.shape
-        progress.set_value(1.0)
-        ui.notify(f"Loaded: shape {dims}", color="positive")
+# Add the widget and progress bar to the viewer
+viewer.window.add_dock_widget(data_loader_widget, area='right', name="Load IR Data")
+viewer.window.add_dock_widget(progress_bar, area='bottom', name="Loading Progress")
 
-    except Exception as ex:
-        progress.set_value(0.0)
-        ui.notify(f"Error loading file: {str(ex)}", color="negative")
-
-
-# UI Layout
-ui.markdown("## InfraPy GUI")
-ui.label("Upload a file to automatically load it")
-ui.upload(
-    on_upload=handle_file_upload,
-    label="Upload and Load",
-    auto_upload=True,
-    max_files=1,
-)
-
-ui.run(title="InfraPy GUI", reload=False)
+# Run the app
+napari.run()
