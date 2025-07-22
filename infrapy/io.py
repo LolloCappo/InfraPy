@@ -1,7 +1,6 @@
 from pathlib import Path
 import numpy as np
 import tifffile
-import imageio.v2 as imageio  # not used but kept for completeness
 import sdypy.io.sfmov as sfmov
 
 def load_ir_data(path):
