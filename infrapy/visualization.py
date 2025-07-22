@@ -1,6 +1,6 @@
 import numpy as np
 
-def synth_lockin_animation(magnitude, phase=None, f=10.0, fs=100, n_frames=100):
+def LIA_animation(magnitude, phase=None, f=10.0, fs=100, n_frames=100):
     """
     Create a synthetic animation of the lock-in magnitude modulated by a sine wave.
 
