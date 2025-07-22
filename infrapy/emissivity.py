@@ -68,7 +68,7 @@ def correct_emissivity(measured_radiance, emissivity=0.95, ambient_temp_K=300.0,
 
     Parameters:
     - measured_radiance: apparent radiance from sensor
-    - emissivity: object surface emissivity (0–1)
+    - emissivity: object surface emissivity (0-1)
     - ambient_temp_K: background reflected temp (usually room temp)
     - method: 'band' or 'monochromatic'
     """
