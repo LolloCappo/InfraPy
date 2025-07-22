@@ -1,39 +1,5 @@
 import numpy as np
 from scipy.signal import resample
-from typing import Tuple
-import logging
-from tqdm import tqdm
-
-# ---------------------------
-# LOGGING SETUP
-# ---------------------------
-
-def setup_logger(name: str = "infrapy", level: int = logging.INFO) -> logging.Logger:
-    """
-    Configure and return a logger for InfraPy modules.
-    """
-    logger = logging.getLogger(name)
-    if not logger.hasHandlers():
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", "%H:%M:%S")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.setLevel(level)
-    return logger
-
-# Example usage:
-# logger = setup_logger()
-# logger.info("Starting process...")
-
-# ---------------------------
-# PROGRESS WRAPPER
-# ---------------------------
-
-def progress_iterator(iterable, desc="Processing", total=None):
-    """
-    Wrap any iterable with a tqdm progress bar.
-    """
-    return tqdm(iterable, desc=desc, total=total)
 
 # ---------------------------
 # UNIT CONVERSIONS
