@@ -14,11 +14,10 @@ Features
 
 -  **Flexible input support**: image stacks, video files, NumPy arrays, CSV
 -  **Temperature tools**: emissivity correction, radiometric-to-temperature conversion
--  **Preprocessing**: detrending, filtering, normalization, cropping
+-  **Time-domain analysis**: Thermography, temperature accumulation analysis
+-  **Frequency-domain analysis**: Thermoelastic Stress Analysis
 -  **Visualization**: ROI monitoring, line profiles, area averages, video animation
--  **Time-domain analysis**: temperature monitoring, basic ROI tracking
--  **Frequency-domain analysis**: TSA lock-in, adaptive lock-in, amplitude and phase mapping
--  **Utility tools**: windowing, unit conversion, SNR calculation, resampling
+-  **Utility tools**: windowing, unit conversion, SNR calculation, resampling, image processing
 -  **Modular design**: clean architecture to support GUI/CLI integration and future analysis modules
 
 Installation
@@ -45,8 +44,7 @@ Library Structure
 
     infrapy/
     ├── io.py                   # Load IR data from files and save results
-    ├── emissivity.py           # Emissivity corrections
-    ├── preprocessing.py        # Detrending, filters, normalization, cropping
+    ├── emissivity.py           # Emissivity-based analysis
     ├── visualization.py        # Visualization tools
     ├── thermography.py         # Classical temperature field tracking
     ├── thermoelasticity.py     # Thermoelastic stress analysis
@@ -56,7 +54,6 @@ Library Structure
 Planned Extensions
 ------------------
 
-- TSA calibration routines for absolute stress estimation
 - Thermal anomaly detection tools
 - GUI frontend for interactive workflows
 
