@@ -49,7 +49,7 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
 
     The 'fft' method uses frequency domain filtering, selecting the frequency bin closest to f_l.
 
-    The 'lsqfit' method fits the model in the time domain using least squares.
+    The 'lsf' method fits the model in the time domain using least squares.
 
     References:
     -----------
@@ -93,7 +93,7 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
         magnitude = 2 * np.abs(fft_val) / N
         phase = np.degrees(np.angle(fft_val))
 
-    elif method == 'lsqfit':
+    elif method == 'lsf':
         # Least squares fitting method
         # Model: A*cos(2π f_l t) + B*sin(2π f_l t) + C (DC term)
         cos_comp = np.cos(2 * np.pi * fl * t)[:, None, None]
@@ -128,7 +128,7 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
         phase = phase.reshape(H, W)
 
     else:
-        raise ValueError("Method must be 'correlation', 'fft', or 'lsqfit'")
+        raise ValueError("Method must be 'correlation', 'fft', or 'lsf'")
 
     return magnitude, phase
 
@@ -169,7 +169,7 @@ def from_material(material):
         raise ValueError(f"Material '{material}' not recognized. Choose from: {list(coefficients.keys())}")
     return coefficients[material]
 
-def from_strain_gauge(data, fs, fl, E, nu, strain, location, method='LIA', **kwargs):
+def from_strain_gauge(data, fs, fl, E, nu, strain, location, method='correlation', **kwargs):
     """
     Obtain the thermoelastic coefficient through strain-gauge calibration procedure
     
@@ -190,24 +190,24 @@ def from_strain_gauge(data, fs, fl, E, nu, strain, location, method='LIA', **kwa
     location : tuple (x, y, w, h)
         ROI coordinates of the area where the strain-gauges are bonded
     method : str
-        Method for thermal amplitude extraction, e.g. 'LIA', 'FFT', 'LSF'
+        Method for thermal amplitude extraction, e.g. 'correlation', 'fft', 'lsf'
     **kwargs:
         Additional arguments passed to the lock_in_analysis function
     
     Returns:
     --------
     km : float
-        Thermoelastic coefficient [Pa^-1]
+        Thermoelastic coefficient [°C / Pa]
     """
 
     x, y, w, h = location
     
     if method == 'correlation':
-        magnitude, phase = lock_in_analysis(data, fs, fl, method='correlation', **kwargs)
+        magnitude, _ = lock_in_analysis(data, fs, fl, method='correlation', **kwargs)
     elif method == 'fft':
-        magnitude, phase = lock_in_analysis(data, fs, fl, method='fft', **kwargs)
+        magnitude, _ = lock_in_analysis(data, fs, fl, method='fft', **kwargs)
     elif method == 'lsf':
-        magnitude, phase = lock_in_analysis(data, fs, fl, method='lsf', **kwargs)
+        magnitude, _ = lock_in_analysis(data, fs, fl, method='lsf', **kwargs)
     else:
         raise ValueError("Invalid method. Choose from 'correlation', 'fft', 'lsf'.")
     
@@ -273,7 +273,7 @@ def thermoelastic_calibration(
     Returns
     -------
     float
-        Thermoelastic coefficient [Pa^-1] for 'material' and 'strain_gauge',
+        Thermoelastic coefficient [°C / Pa] for 'material' and 'strain_gauge',
         or equivalent strain (unitless) for 'direct_strain'.
     
     Raises
