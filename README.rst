@@ -83,3 +83,12 @@ Contact
 Project Lead: Lorenzo Capponi
 Email: lorenzocapponi@outlook.it
 GitHub: https://github.com/LolloCappo/infrapy
+
+
+Acknowledgements
+-------------------
+``InfraPy`` was developed within the framework of the `ARTEMIDE`_ project, funded by the European Research Agency (ERA) under the Maria Skłodowska Curie Actions (MSCA). Grant id is 101180595.
+
+
+.. _ARTEMIDE: http://ladisk.si/?what=incfl&flnm=artemide.php
+
