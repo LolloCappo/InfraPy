@@ -81,7 +81,9 @@ Contact
 -------
 
 Project Lead: Lorenzo Capponi
+
 Email: lorenzocapponi@outlook.it
+
 GitHub: https://github.com/LolloCappo/infrapy
 
 
