@@ -46,8 +46,8 @@ Library Structure
     ├── io.py                   # Load IR data from files and save results
     ├── emissivity.py           # Emissivity-based analysis
     ├── visualization.py        # Visualization tools
-    ├── thermography.py         # Classical temperature field tracking
-    ├── thermoelasticity.py     # Thermoelastic stress analysis
+    ├── thermography.py         # Thermography-based analysis
+    ├── thermoelasticity.py     # Thermoelasticity-based analysis 
     └── utils.py                # General-purpose utilities
 
 
