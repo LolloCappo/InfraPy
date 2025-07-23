@@ -9,8 +9,14 @@ def load_ir_data(path):
     - Single or multi-frame TIFF, CSV, SFMOV, NPY, NPZ
     - Folder of TIFF, CSV, or SFMOV files (each treated as 1 frame)
 
-    Always returns:
-        ndarray: 3D array with shape (num_frames, height, width)
+    Parameters
+    ----------
+    path : str or Path
+        Path to the file or directory containing infrared data.
+
+    Returns
+    ----------
+    ndarray: 3D array with shape (num_frames, height, width)
     """
     path = Path(path)
 
