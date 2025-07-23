@@ -19,7 +19,7 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
         Method to use for lock-in:
         - 'correlation' : correlation method using sine and cosine demodulation (equivalent to lock-in amplifier).
         - 'fft'         : FFT-based method extracting the frequency component closest to fl. Default method
-        - 'lsqfit'      : Least squares fitting method fitting a sum of sinusoids at fl.
+        - 'lsf'         : Least squares fitting method fitting a sum of sinusoids at fl.
 
     band : float, optional
         Frequency bandwidth around fl to consider in 'fft' method [Hz]. Ignored for other methods.
