@@ -23,7 +23,7 @@ Features
 Installation
 ------------
 
-Install via pip (once published):
+Install via pip:
 
 .. code-block:: bash
 
@@ -36,20 +36,6 @@ Or install from source:
     git clone https://github.com/LolloCappo/infrapy.git
     cd infrapy
     pip install -e .
-
-Library Structure
------------------
-
-.. code-block:: text
-
-    infrapy/
-    ├── io.py                   # Load IR data from files and save results
-    ├── emissivity.py           # Emissivity-based analysis
-    ├── visualization.py        # Visualization tools
-    ├── thermography.py         # Thermography-based analysis
-    ├── thermoelasticity.py     # Thermoelasticity-based analysis 
-    └── utils.py                # General-purpose utilities
-
 
 Planned Extensions
 ------------------
