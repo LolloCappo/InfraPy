@@ -15,12 +15,28 @@ def load_ir_data(path):
     path = Path(path)
 
     def ensure_3d(arr):
-        """Make sure output is always (frames, height, width)"""
+        """Make sure output is always (frames, height, width) with single grayscale channel."""
         arr = arr.astype(np.float32)
         if arr.ndim == 2:
+            # Single frame, 2D image
             return arr[np.newaxis, ...]
         elif arr.ndim == 3:
-            return arr
+            # Could be (frames, height, width) or (height, width, channels)
+            if arr.shape[-1] in [3, 4]:
+                # (height, width, channels) -> convert to grayscale and add frame axis
+                arr_gray = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
+                return arr_gray[np.newaxis, ...]
+            else:
+                # (frames, height, width)
+                return arr
+        elif arr.ndim == 4:
+            # (frames, height, width, channels)
+            if arr.shape[-1] in [3, 4]:
+                # Convert each frame to grayscale using weighted sum over channels
+                arr_gray = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
+                return arr_gray
+            else:
+                raise ValueError(f"Unsupported array shape: {arr.shape}")
         else:
             raise ValueError(f"Unsupported array shape: {arr.shape}")
 
@@ -80,24 +96,52 @@ def load_ir_data(path):
     else:
         raise ValueError(f"Unsupported file type: {suffix}")
 
-def save_ir_data(array, filepath, key="data"):
+def save_ir_data(array, filepath, key="data", overwrite=True):
     """
-    Save a NumPy array to .npy or .npz format.
+    Save a 2D or 3D NumPy array to disk in .npy or compressed .npz format.
 
-    Args:
-        array (np.ndarray): The array to save (2D or 3D).
-        filepath (str or Path): Destination file path (.npy or .npz).
-        key (str): Key name to use if saving to .npz (default: "data").
+    Parameters
+    ----------
+    array : np.ndarray
+        Array to save. Expected shape is (height, width) or (frames, height, width).
+    filepath : str or Path
+        Destination file path. Must have extension .npy or .npz.
+    key : str, optional
+        Key name for the array if saving as .npz (default is "data").
+    overwrite : bool, optional
+        Whether to overwrite existing files (default True). If False and file exists, raises FileExistsError.
 
-    Raises:
-        ValueError: If file extension is not .npy or .npz.
+    Raises
+    ------
+    ValueError
+        If file extension is not .npy or .npz.
+    TypeError
+        If input array is not a NumPy ndarray.
+    FileExistsError
+        If overwrite is False and file already exists.
+
+    Returns
+    -------
+    Path
+        The full path to the saved file as a Path object.
     """
+    if not isinstance(array, np.ndarray):
+        raise TypeError("Input 'array' must be a NumPy ndarray.")
+
+    if array.ndim not in [2, 3]:
+        raise ValueError(f"Input array must be 2D or 3D, got {array.ndim}D.")
+
     filepath = Path(filepath)
     suffix = filepath.suffix.lower()
+
+    if filepath.exists() and not overwrite:
+        raise FileExistsError(f"File {filepath} already exists and overwrite=False.")
 
     if suffix == ".npy":
         np.save(filepath, array)
     elif suffix == ".npz":
         np.savez_compressed(filepath, **{key: array})
     else:
-        raise ValueError(f"Unsupported file format for saving: {suffix}. Use .npy or .npz.")
+        raise ValueError(f"Unsupported file format: {suffix}. Use .npy or .npz.")
+
+    return filepath
