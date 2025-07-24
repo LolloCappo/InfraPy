@@ -1,176 +1,138 @@
-import napari
-from magicgui import magicgui
-from qtpy.QtWidgets import (
-    QApplication, QFileDialog, QProgressBar, QWidget, QVBoxLayout, QSplashScreen
-)
-from qtpy.QtGui import QPixmap
-from qtpy.QtCore import Qt
-from pathlib import Path
 import sys
 import os
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import (
-    FigureCanvasQTAgg as FigureCanvas,
-    NavigationToolbar2QT as NavigationToolbar,
+from pathlib import Path
+
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout,
+    QWidget, QLabel, QProgressBar, QSplashScreen, QAction
 )
-from skimage.draw import polygon
-import time
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QPixmap, QIcon
+import pyqtgraph as pg
 
-# === Initialize QApplication ===
-app = QApplication.instance()
-if app is None:
-    app = QApplication([])
-
-# === Load splash logo safely ===
-logo_path = Path(__file__).parent / "logo_loading.png"
-splash_pix = QPixmap(str(logo_path))
-splash_pix = splash_pix.scaled(800, 800, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    
-# === Show splash screen ===
-splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
-splash.show()
-app.processEvents()
-
-# Simulate loading time
-time.sleep(1.5)
-
-# === Adjust Python path to find your infrapy module ===
+# Adjust path to access infrapy.io
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from infrapy import io  # Make sure this path is correct for your project
-
-# === Create Napari viewer ===
-viewer = napari.Viewer(title="InfraPy - Infrared Image Processing")
-viewer.theme = "light"
-
-# === Close splash after GUI is ready ===
-splash.finish(viewer.window._qt_window)
-
-# === Progress bar ===
-progress_bar = QProgressBar()
-progress_bar.setRange(0, 100)
-progress_bar.setValue(0)
-progress_bar.setVisible(False)
-
-# === Global variables ===
-loaded_data = None
-fig, ax = plt.subplots()
-canvas_widget = None
+from infrapy import io  # Ensure this is your actual IR data loading module
 
 
-# === ROI statistics ===
-def extract_roi_stats(shapes_layer, data):
-    stats = {}
-    for i, shape in enumerate(shapes_layer.data):
+class IRViewerPG(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("INFRAPY")
+        self.setWindowIcon(QIcon('icon.png'))
+        self.resize(1300, 800)
+
+        self.loaded_data = None
+        self.current_frame = 0
+
+        self.init_menu()
+        self.init_ui()
+
+    def init_menu(self):
+        menubar = self.menuBar()
+
+        # File > Load
+        file_menu = menubar.addMenu("File")
+        load_action = QAction("Load Data", self)
+        load_action.triggered.connect(self.load_ir_data)
+        file_menu.addAction(load_action)
+
+        # View > Colormap
+        view_menu = menubar.addMenu("View")
+        colormap_menu = view_menu.addMenu("Colormap")
+
+        self.colormaps = ["gray", "viridis", "plasma", "inferno", "cividis"]
+        for cmap in self.colormaps:
+            cmap_action = QAction(cmap, self)
+            cmap_action.triggered.connect(lambda checked, c=cmap: self.set_colormap(c))
+            colormap_menu.addAction(cmap_action)
+
+    def init_ui(self):
+        central = QWidget()
+        vlayout = QVBoxLayout(central)
+        self.setCentralWidget(central)
+
+        # Progress bar below menu
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        vlayout.addWidget(self.progress_bar)
+
+        # Viewer + label
+        layout = QHBoxLayout()
+        vlayout.addLayout(layout)
+
+        # ImageView
+        self.image_view = pg.ImageView()
+        self.image_view.ui.roiBtn.hide()
+        self.image_view.ui.menuBtn.hide()
+        self.image_view.getView().setAspectLocked(True)
+        layout.addWidget(self.image_view)
+
+        # Right panel
+        controls = QVBoxLayout()
+        controls.addStretch()
+        layout.addLayout(controls)
+
+    def load_ir_data(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open IR File", "",
+            "IR Files (*.tif *.tiff *.csv *.sfmov *.npy *.npz);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        path = Path(file_path)
         try:
-            if shape.shape[0] < 3:
-                print(f"⚠️ Skipping ROI {i+1}: fewer than 3 points.")
-                continue
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(10)
+            QApplication.processEvents()
 
-            # Ensure coordinates are within bounds
-            rr, cc = polygon(shape[:, 0], shape[:, 1], shape=data.shape[1:])
-            mask = np.zeros(data.shape[1:], dtype=bool)
-            mask[rr, cc] = True
+            self.loaded_data = io.load_ir_data(path)
+            self.progress_bar.setValue(50)
 
-            values = [
-                data[frame][mask].mean() if np.any(mask) else np.nan
-                for frame in range(data.shape[0])
-            ]
-            stats[i] = values
+            if self.loaded_data.ndim == 2:
+                self.loaded_data = self.loaded_data[np.newaxis, :, :]
 
+            # Transpose to correct orientation
+            self.loaded_data = self.loaded_data.transpose(0, 2, 1)
+
+            self.image_view.setImage(self.loaded_data, xvals=np.arange(self.loaded_data.shape[0]))
+
+            self.progress_bar.setValue(100)
         except Exception as e:
-            print(f"❌ Failed to process ROI {i+1}: {e}")
-    return stats
-
-def update_plot(stats):
-    ax.clear()
-    for roi_idx, values in stats.items():
-        ax.plot(values, label=f"ROI {roi_idx + 1}")
-    ax.set_xlabel("Frame")
-    ax.set_ylabel("Mean Pixel Value")
-    ax.set_title("Mean Pixel Value Over Time")
-    ax.grid(True)
-    ax.legend()
-    fig.tight_layout()
-    canvas_widget.draw_idle()
-
-
-def on_shapes_change(event):
-    if loaded_data is None:
-        return
-    shapes_layer = event.source
-    stats = extract_roi_stats(shapes_layer, loaded_data)
-    update_plot(stats)
-
-
-# === Matplotlib plot panel ===
-class PlotWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        global canvas_widget
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        self.canvas = FigureCanvas(fig)
-        self.toolbar = NavigationToolbar(self.canvas, self)
-        canvas_widget = self.canvas
-
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)
-        self.setLayout(layout)
-
-
-# === Data loader widget ===
-@magicgui(call_button="Load IR Data")
-def data_loader_widget():
-    global loaded_data
-
-    dialog = QFileDialog()
-    dialog.setFileMode(QFileDialog.AnyFile)
-    dialog.setAcceptMode(QFileDialog.AcceptOpen)
-    dialog.setNameFilter("IR Files (*.tif *.tiff *.csv *.sfmov *.npy *.npz);;All files (*)")
-
-    if dialog.exec_():
-        selected = dialog.selectedFiles()[0]
-        path = Path(selected)
-
-        try:
-            progress_bar.setVisible(True)
-            progress_bar.setValue(10)
-
-            data = io.load_ir_data(path)
-
-            progress_bar.setValue(90)
-
-            name = path.stem if path.is_file() else path.name
-            if data.shape[0] == 1:
-                viewer.add_image(data[0], name=name, colormap="inferno")
-            else:
-                viewer.add_image(data, name=name, colormap="inferno")
-
-            loaded_data = data
-
-            if "ROIs" not in viewer.layers:
-                shapes = viewer.add_shapes(name="ROIs", shape_type="polygon",
-                                           edge_color="yellow", face_color="transparent", opacity=0.5)
-                shapes.events.data.connect(on_shapes_change)
-            else:
-                viewer.layers["ROIs"].data = []
-
-            progress_bar.setValue(100)
-
-        except Exception as e:
-            print(f"❌ Failed to load {path}: {e}")
+            print(f"❌ Error loading {file_path}: {e}")
         finally:
-            progress_bar.setVisible(False)
-            progress_bar.setValue(0)
+            self.progress_bar.setVisible(False)
+
+    def set_colormap(self, cmap_name):
+        try:
+            lut = pg.colormap.get(cmap_name).getLookupTable(0.0, 1.0, 256)
+            self.image_view.setColorMap(pg.ColorMap(pos=np.linspace(0, 1, 256), color=lut))
+        except Exception as e:
+            print(f"Error setting colormap {cmap_name}: {e}")
 
 
-# === Add widgets to Napari GUI ===
-plot_widget = PlotWidget()
-viewer.window.add_dock_widget(data_loader_widget, area='right', name="Load IR Data")
-viewer.window.add_dock_widget(plot_widget, area='right', name="ROI Statistics")
-viewer.window.add_dock_widget(progress_bar, area='bottom', name="Loading Progress")
+def show_splash_then_main():
+    app = QApplication(sys.argv)
 
-# === Start Napari ===
-napari.run()
+    splash = None
+    logo_path = Path(__file__).parent / "logo.png"
+    if logo_path.exists():
+        pixmap = QPixmap(str(logo_path)).scaled(800, 800, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        splash = QSplashScreen(pixmap, Qt.WindowStaysOnTopHint)
+        splash.show()
+        app.processEvents()
+
+    def launch_main():
+        app.main_window = IRViewerPG()
+        app.main_window.show()
+        if splash:
+            splash.finish(app.main_window)
+
+    QTimer.singleShot(1500, launch_main)
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    show_splash_then_main()
