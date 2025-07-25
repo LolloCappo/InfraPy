@@ -8,6 +8,8 @@ from PyQt5.QtWidgets import (
     QWidget, QLabel, QProgressBar, QSplashScreen, QAction
 )
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import QPixmap, QIcon
 import pyqtgraph as pg
 
@@ -20,7 +22,7 @@ class IRViewerPG(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("INFRAPY")
-        self.setWindowIcon(QIcon('icon.png'))
+        self.setWindowIcon(QIcon('infrapy/GUIs/icon.png'))
         self.resize(1300, 800)
 
         self.loaded_data = None
@@ -41,6 +43,12 @@ class IRViewerPG(QMainWindow):
         # View > Colormap
         view_menu = menubar.addMenu("View")
         colormap_menu = view_menu.addMenu("Colormap")
+
+        # Help > Documentation
+        help_menu = menubar.addMenu("Help")
+        doc_action = QAction("Documentation", self)
+        doc_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/LolloCappo/InfraPy")))
+        help_menu.addAction(doc_action)
 
         self.colormaps = ["gray", "viridis", "plasma", "inferno", "cividis"]
         for cmap in self.colormaps:
@@ -117,7 +125,7 @@ def show_splash_then_main():
     app = QApplication(sys.argv)
 
     splash = None
-    logo_path = Path(__file__).parent / "logo.png"
+    logo_path = Path(__file__).parent / "icon.png"
     if logo_path.exists():
         pixmap = QPixmap(str(logo_path)).scaled(800, 800, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         splash = QSplashScreen(pixmap, Qt.WindowStaysOnTopHint)
