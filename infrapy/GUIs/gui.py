@@ -7,15 +7,30 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QProgressBar, QSplashScreen, QAction
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt5.QtGui import QDesktopServices, QPixmap, QIcon
 from PyQt5.QtCore import QUrl
-from PyQt5.QtGui import QPixmap, QIcon
 import pyqtgraph as pg
 
 # Adjust path to access infrapy.io
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from infrapy import io  # Ensure this is your actual IR data loading module
+
+
+class LoaderThread(QThread):
+    finished = pyqtSignal(object)
+    error = pyqtSignal(Exception)
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+
+    def run(self):
+        try:
+            data = io.load_ir_data(self.path)
+            self.finished.emit(data)
+        except Exception as e:
+            self.error.emit(e)
 
 
 class IRViewerPG(QMainWindow):
@@ -91,27 +106,34 @@ class IRViewerPG(QMainWindow):
             return
 
         path = Path(file_path)
-        try:
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(10)
-            QApplication.processEvents()
 
-            self.loaded_data = io.load_ir_data(path)
-            self.progress_bar.setValue(50)
+        # Show busy indicator
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0)  # Indeterminate mode (spinner)
+        
+        # Start loader thread
+        self.loader_thread = LoaderThread(path)
+        self.loader_thread.finished.connect(self.on_load_finished)
+        self.loader_thread.error.connect(self.on_load_error)
+        self.loader_thread.start()
 
-            if self.loaded_data.ndim == 2:
-                self.loaded_data = self.loaded_data[np.newaxis, :, :]
+    def on_load_finished(self, data):
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)  # Reset to normal mode
 
-            # Transpose to correct orientation
-            self.loaded_data = self.loaded_data.transpose(0, 2, 1)
+        self.loaded_data = data
+        if self.loaded_data.ndim == 2:
+            self.loaded_data = self.loaded_data[np.newaxis, :, :]
 
-            self.image_view.setImage(self.loaded_data, xvals=np.arange(self.loaded_data.shape[0]))
+        # Transpose to correct orientation
+        self.loaded_data = self.loaded_data.transpose(0, 2, 1)
 
-            self.progress_bar.setValue(100)
-        except Exception as e:
-            print(f"❌ Error loading {file_path}: {e}")
-        finally:
-            self.progress_bar.setVisible(False)
+        self.image_view.setImage(self.loaded_data, xvals=np.arange(self.loaded_data.shape[0]))
+
+    def on_load_error(self, e):
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)
+        print(f"❌ Error loading data: {e}")
 
     def set_colormap(self, cmap_name):
         try:
