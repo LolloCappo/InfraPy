@@ -158,6 +158,9 @@ class IRViewerPG(QMainWindow):
         doc_action = QAction("Documentation", self)
         doc_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/LolloCappo/InfraPy")))
         help_menu.addAction(doc_action)
+        update_action = QAction("Check for updates", self)
+        update_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/LolloCappo/InfraPy")))
+        help_menu.addAction(update_action)
 
         self.colormaps = ["gray", "viridis", "plasma", "inferno", "cividis"]
         for cmap in self.colormaps:
@@ -181,10 +184,13 @@ class IRViewerPG(QMainWindow):
 
         # Image viewer
         self.image_view = pg.ImageView()
-        self.image_view.ui.roiBtn.hide()
+        #self.image_view.ui.roiBtn.hide()
+        roi_button = self.image_view.ui.roiBtn
+        roi_button.setToolTip("Visualize time profile over time")
+        roi_button.setText("Time viewer")
         self.image_view.ui.menuBtn.hide()
         self.image_view.ui.histogram.show()
-        self.image_view.timeLine.hide()
+        #self.image_view.timeLine.hide()
         self.image_view.getView().setAspectLocked(True)
         layout.addWidget(self.image_view)
 
@@ -196,12 +202,12 @@ class IRViewerPG(QMainWindow):
         self.trim_slider.valueChanged.connect(self.update_frame_display)
         bottom_controls.addWidget(self.trim_slider)
 
-        self.apply_button = QPushButton("Apply Clip")
+        self.apply_button = QPushButton("Trim Video")
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self.apply_clipping)
         bottom_controls.addWidget(self.apply_button)
 
-        self.undo_button = QPushButton("Undo Clip")
+        self.undo_button = QPushButton("Undo Trim")
         self.undo_button.setEnabled(False)
         self.undo_button.clicked.connect(self.undo_clipping)
         bottom_controls.addWidget(self.undo_button)
@@ -213,7 +219,7 @@ class IRViewerPG(QMainWindow):
 
     def load_ir_data(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open IR File", "",
+            self, "Open File", "",
             "IR Files (*.tif *.tiff *.csv *.sfmov *.npy *.npz);;All Files (*)"
         )
         if not file_path:
