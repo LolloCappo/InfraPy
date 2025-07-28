@@ -1,22 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from matplotlib.colors import TwoSlopeNorm
 from pathlib import Path
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from pathlib import Path
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from pathlib import Path
+from ipywidgets import interact, FloatSlider, fixed
+import ipywidgets as widgets
+from infrapy.thermoelasticity import lock_in_analysis
 
 def animate_tsa(magnitude, phase=None, f=10.0, fs=100, n_frames=100, 
                 cmap='viridis', save_path=None, dpi=150, speed_factor=2.0):

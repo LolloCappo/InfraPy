@@ -19,7 +19,6 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
         Method to use for lock-in:
         - 'correlation' : correlation method using sine and cosine demodulation (equivalent to lock-in amplifier).
         - 'fft'         : FFT-based method extracting the frequency component closest to fl. Default method
-        - 'lsf'         : Least squares fitting method fitting a sum of sinusoids at fl.
 
     band : float, optional
         Frequency bandwidth around fl to consider in 'fft' method [Hz]. Ignored for other methods.
@@ -49,12 +48,10 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
 
     The 'fft' method uses frequency domain filtering, selecting the frequency bin closest to f_l.
 
-    The 'lsf' method fits the model in the time domain using least squares.
-
     References:
     -----------
-    - Pitarresi, G., Cappello, R., & Catalanotti, G. (2020). Quantitative thermoelastic stress analysis by means of low-cost setups.
-    Optics and Lasers in Engineering, 134, 106158.
+    - Pitarresi, G. "Lock-in signal post-processing techniques in infra-red thermography for materials structural evaluation."
+        Experimental Mechanics 55.4 (2015): 667-680.
 
     """
     N, H, W = data.shape
@@ -80,53 +77,25 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
         fft_data = np.fft.rfft(data, axis=0)  # shape: [N_freqs, H, W]
         freqs = np.fft.rfftfreq(N, d=1/fs)    # positive frequencies only
 
-        # Frequency band selection
-        band_mask = (freqs >= fl - band/2) & (freqs <= fl + band/2)
-        selected_freqs = freqs[band_mask]
-        selected_fft = fft_data[band_mask, :, :]
-
-        # Find closest frequency to fl
-        idx = np.argmin(np.abs(selected_freqs - fl))
-        fft_val = selected_fft[idx]
+        # Select frequency bin
+        if band > 0:
+            # Frequency band selection
+            band_mask = (freqs >= fl - band/2) & (freqs <= fl + band/2)
+            if not np.any(band_mask):
+                raise ValueError(f"No frequency components found within ±{band/2} Hz of {fl} Hz")
+            selected_freqs = freqs[band_mask]
+            selected_fft = fft_data[band_mask, :, :]
+            idx = np.argmin(np.abs(selected_freqs - fl))
+            fft_val = selected_fft[idx]
+        else:
+            # Just find the closest bin
+            idx = np.argmin(np.abs(freqs - fl))
+            fft_val = fft_data[idx]
 
         # Extract magnitude and phase
         magnitude = 2 * np.abs(fft_val) / N
-        phase = np.degrees(np.angle(fft_val))
-
-    elif method == 'lsf':
-        # Least squares fitting method
-        # Model: A*cos(2π f_l t) + B*sin(2π f_l t) + C (DC term)
-        cos_comp = np.cos(2 * np.pi * fl * t)[:, None, None]
-        sin_comp = np.sin(2 * np.pi * fl * t)[:, None, None]
-        ones_comp = np.ones_like(cos_comp)
-
-        # Build design matrix [N x 3]
-        # We'll solve separately for each pixel: y = Xb + noise, b = [A, B, C]
-        X_mat = np.stack([cos_comp, sin_comp, ones_comp], axis=-1)  # shape (N,H,W,3)
-
-        # Reshape for vectorized least squares
-        X_reshaped = X_mat.reshape(N, -1, 3)  # (N, H*W, 3)
-        y = data.reshape(N, -1)               # (N, H*W)
-
-        # Solve for b using least squares for each pixel
-        # b = (X.T X)^-1 X.T y for each pixel separately
-        b = np.empty((y.shape[1], 3))
-        for i in range(y.shape[1]):
-            Xi = X_reshaped[:, i, :]  # (N,3)
-            yi = y[:, i]              # (N,)
-            coeffs, _, _, _ = np.linalg.lstsq(Xi, yi, rcond=None)
-            b[i, :] = coeffs
-
-        A = b[:, 0]
-        B = b[:, 1]
-        # C = b[:, 2]  # DC offset, not used here
-
-        magnitude = 2 * np.sqrt(A**2 + B**2)
-        phase = np.degrees(np.arctan2(B, A))
-
-        magnitude = magnitude.reshape(H, W)
-        phase = phase.reshape(H, W)
-
+        phase = np.degrees(np.unwrap(np.angle(fft_val)))
+        
     else:
         raise ValueError("Method must be 'correlation', 'fft', or 'lsf'")
 
@@ -190,7 +159,7 @@ def from_strain_gauge(data, fs, fl, E, nu, strain, location, method='correlation
     location : tuple (x, y, w, h)
         ROI coordinates of the area where the strain-gauges are bonded
     method : str
-        Method for thermal amplitude extraction, e.g. 'correlation', 'fft', 'lsf'
+        Method for thermal amplitude extraction, e.g. 'correlation', 'fft'
     **kwargs:
         Additional arguments passed to the lock_in_analysis function
     
@@ -206,10 +175,8 @@ def from_strain_gauge(data, fs, fl, E, nu, strain, location, method='correlation
         magnitude, _ = lock_in_analysis(data, fs, fl, method='correlation', **kwargs)
     elif method == 'fft':
         magnitude, _ = lock_in_analysis(data, fs, fl, method='fft', **kwargs)
-    elif method == 'lsf':
-        magnitude, _ = lock_in_analysis(data, fs, fl, method='lsf', **kwargs)
     else:
-        raise ValueError("Invalid method. Choose from 'correlation', 'fft', 'lsf'.")
+        raise ValueError("Invalid method. Choose from 'correlation', 'fft'.")
     
     # Average magnitude in the ROI
     mag_avg = np.mean(magnitude[y:y+h, x:x+w])
