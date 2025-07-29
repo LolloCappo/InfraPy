@@ -2,6 +2,7 @@ import sys
 import os
 import numpy as np
 from pathlib import Path
+import math
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QVBoxLayout, QHBoxLayout,
@@ -14,13 +15,47 @@ from PyQt5 import QtCore
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps)
 from PyQt5.QtWidgets import QProgressDialog, QApplication
+from PyQt5.QtWidgets import QDialog, QLabel, QVBoxLayout
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
+from PyQt5.QtCore import Qt, QTimer
 import pyqtgraph as pg
+
+
 
 # Adjust path to access infrapy modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from infrapy import io  # Your IR data loading module
 from infrapy.thermoelasticity import lock_in_analysis
 
+
+class TerminalWindow(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Terminal")
+        self.resize(800, 200)
+
+        layout = QVBoxLayout(self)
+        self.text_area = QLabel()
+        self.text_area.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.text_area.setStyleSheet("background-color: black; color: lime; font-family: monospace;")
+        self.text_area.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.text_area.setWordWrap(True)
+
+        scroll = QWidget()
+        scroll_layout = QVBoxLayout(scroll)
+        scroll_layout.addWidget(self.text_area)
+
+        layout.addWidget(self.text_area)
+
+        self._log = []
+
+    def write(self, text):
+        self._log.append(text)
+        self.text_area.setText("".join(self._log))
+
+    def flush(self):
+        pass  # Needed for compatibility with sys.stdout
 
 class QRangeSlider(QWidget):
     valueChanged = pyqtSignal(tuple)  # Emits (start, end) integers
@@ -153,6 +188,11 @@ class IRViewerPG(QMainWindow):
         self.fs = None
         self.use_time_axis = False
 
+        # Initialize terminal
+        self.terminal_window = TerminalWindow(self)
+        sys.stdout = self.terminal_window
+        sys.stderr = self.terminal_window  # Optional: show errors too
+
         self.init_menu()
         self.init_ui()
 
@@ -189,6 +229,11 @@ class IRViewerPG(QMainWindow):
         resize_action = QAction("Fit to Screen", self)
         resize_action.triggered.connect(self.fit_to_screen)
         view_menu.addAction(resize_action)
+        terminal_action = QAction("Terminal", self)
+
+        terminal_action.triggered.connect(self.terminal_window.show)
+        view_menu.addAction(terminal_action)
+
 
         # Analysis menu
         analysis_menu = menubar.addMenu("Analysis")
@@ -291,7 +336,7 @@ class IRViewerPG(QMainWindow):
             self.loaded_data = data.copy()
 
             # Prompt for sampling frequency
-            fs, ok = QInputDialog.getDouble(self, "Sampling Frequency", "Enter sampling frequency (Hz):", 50.0, 0.01, 1e6, 2)
+            fs, ok = QInputDialog.getDouble(self, "Sampling Frequency", "Enter sampling frequency [Hz]:", 50.0, 0.01, 1e6, 2)
             if not ok:
                 fs = 1.0  # Default to 1 to avoid divide-by-zero
             self.fs = fs
@@ -370,82 +415,83 @@ class IRViewerPG(QMainWindow):
         dlg.exec_()
 
     def run_fft_analysis(self):
-        if self.loaded_data is None:
-            print("No video loaded.")
-            return
-        if not hasattr(self, 'fs') or self.fs is None:
-            print("Sampling frequency not set.")
+        if self.loaded_data is None or not hasattr(self, 'fs') or self.fs is None:
+            print("Video or sampling frequency missing.")
             return
 
         data = self.loaded_data
         fs = self.fs
-        n_frames = data.shape[0]
+        n_frames, h, w = data.shape
+        n_freqs = n_frames // 2 + 1
 
-        # Compute FFT over time axis
-        def compute_fft_with_progress(data, fs, parent=None):
-            n_frames, height, width = data.shape
-            n_freqs = n_frames // 2 + 1
-            fft_data = np.empty((n_freqs, height, width), dtype=np.complex64)
+        # Prepare progress dialog
+        progress = QProgressDialog("Computing FFT...", "Cancel", 0, h, self)  # h = image height
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
 
-            progress = QProgressDialog("Computing FFT...", "Cancel", 0, height, parent)
-            progress.setWindowModality(Qt.ApplicationModal)
-            progress.setMinimumDuration(0)
+        QApplication.processEvents()
 
-            for y in range(height):
-                QApplication.processEvents()  # allow UI update
-                if progress.wasCanceled():
-                    return None  # You can handle cancel gracefully
-                fft_data[:, y, :] = np.fft.rfft(data[:, y, :] - np.mean(data[:, y, :]), axis=0)
-                progress.setValue(y)
+        # Preallocate arrays
+        fft_data = np.empty((n_freqs, h, w), dtype=np.complex64)
 
-            progress.setValue(height)
-            fft_freqs = np.fft.rfftfreq(n_frames, d=1/fs)
-            return fft_data, fft_freqs
-        
+        # Compute FFT frame-by-frame (across time axis)
+        time_series = data - data.mean(axis=0)  # remove mean
+        for i in range(h):
+            for j in range(w):
+                signal = time_series[:, i, j]
+                fft_result = np.fft.rfft(signal)
+                fft_data[:, i, j] = fft_result
+
+            progress.setValue(i)
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                print("FFT cancelled.")
+                return
+
         fft_freqs = np.fft.rfftfreq(n_frames, d=1/fs)
-
-        fft_data, fft_freqs = compute_fft_with_progress(data, fs, parent=self)
-        if fft_data is None:
-            print("FFT canceled.")
-            return
-        
-        fft_mag = np.abs(fft_data) * 2/n_frames
+        fft_mag = np.abs(fft_data) * 2/ n_frames  # Scale by number of frames
         fft_phase = np.angle(fft_data)
 
-        # Store for interaction
-        self.current_fft_index = 0
-        self.fft_freqs = fft_freqs
+        def spectrum_callback(mean_signal):
+            spectrum = np.abs(np.fft.rfft(mean_signal - mean_signal.mean()))
+            return fft_freqs, spectrum
 
-        # Dialog setup
+        progress.setValue(n_frames)
+        progress.close()
+
+        self.show_frequency_analysis_viewer(data, fft_freqs, fft_mag, fft_phase, spectrum_callback)
+
+    def show_frequency_analysis_viewer(self, original_data, freq_vector, mag_data, phase_data, spectrum_callback):
         dlg = QDialog(self)
-        dlg.setWindowTitle("FFT Analysis")
-        dlg.resize(1600, 800)
+        dlg.setWindowTitle("Frequency Domain Analysis")
+        dlg.resize(self.size())
         layout = QVBoxLayout(dlg)
 
-        # Top row: 3 ImageView widgets
-        top_row = QHBoxLayout()
-        layout.addLayout(top_row)
+        # Top row viewers
+        top = QHBoxLayout()
+        layout.addLayout(top)
 
         raw_view = pg.ImageView()
-        raw_view.setImage(data, autoLevels=True)
+        raw_view.setImage(original_data, autoLevels=True)
         raw_view.ui.menuBtn.hide()
-        top_row.addWidget(raw_view)
+        top.addWidget(raw_view)
 
         mag_view = pg.ImageView()
-        mag_view.setImage(fft_mag, autoLevels=True)
+        mag_view.setImage(mag_data, autoLevels=True)
         mag_view.ui.menuBtn.hide()
         mag_view.ui.roiBtn.hide()
-        top_row.addWidget(mag_view)
+        top.addWidget(mag_view)
 
         ph_view = pg.ImageView()
-        ph_view.setImage(fft_phase, autoLevels=True)
+        ph_view.setImage(phase_data, autoLevels=True)
         ph_view.ui.menuBtn.hide()
         ph_view.ui.roiBtn.hide()
-        top_row.addWidget(ph_view)
+        top.addWidget(ph_view)
 
-        # Bottom: spectrum plot with draggable cursor
+        # Spectrum plot below
         spectrum_plot = pg.PlotWidget()
-        spectrum_plot.setLabel("bottom", "Frequency", units="Hz")
+        spectrum_plot.setLabel("bottom", "Frequency [Hz]")
         spectrum_plot.setLabel("left", "Amplitude")
         layout.addWidget(spectrum_plot)
         spectrum_curve = spectrum_plot.plot([], pen='y')
@@ -453,62 +499,60 @@ class IRViewerPG(QMainWindow):
         cursor_line = pg.InfiniteLine(angle=90, movable=True, pen='r')
         spectrum_plot.addItem(cursor_line)
 
-        # ROI on original video
-        roi = pg.RectROI([30, 30], [40, 40], pen='r')
+        roi = pg.RectROI([30, 30], [40, 40], pen=pg.mkPen('r', width=2))
         raw_view.addItem(roi)
 
-        # Function to update spectrum from ROI
-        def update_spectrum():
-            try:
-                region = np.array([
-                    roi.getArrayRegion(data[i], raw_view.imageItem)
-                    for i in range(data.shape[0])
-                ])
-                if region.ndim != 3:
-                    return
-                mean_signal = region.mean(axis=(1, 2))  # shape: (n_frames,)
-                spectrum = np.abs(np.fft.rfft(mean_signal)) * 2/data.shape[0]
-                spectrum_curve.setData(fft_freqs, spectrum)
+        self.current_fft_index = 0
 
-                # Move cursor to current index
-                if self.current_fft_index < len(fft_freqs):
-                    cursor_line.setPos(fft_freqs[self.current_fft_index])
-                    update_fft_images_from_cursor()
-            except Exception as e:
-                print(f"FFT spectrum update failed: {e}")
+            # Set sizes here
+        raw_view.setMinimumSize(400, 400)
+        mag_view.setMinimumSize(400, 400)
+        ph_view .setMinimumSize(400, 400)
+        spectrum_plot.setMinimumHeight(150)
 
-        # Function to update mag/phase maps from frequency selection
         def update_fft_images_from_cursor():
             freq_pos = cursor_line.value()
-            idx = (np.abs(fft_freqs - freq_pos)).argmin()
+            idx = np.abs(freq_vector - freq_pos).argmin()
             self.current_fft_index = idx
-            if 0 <= idx < fft_mag.shape[0]:
-                mag_slice = fft_mag[idx]
-                ph_slice = fft_phase[idx]
-                mag_view.setImage(mag_slice[np.newaxis, :, :], autoLevels=False)
-                ph_view.setImage(ph_slice[np.newaxis, :, :], autoLevels=False)
+            slice_mag = mag_data[idx]
+            slice_phase = phase_data[idx]
+            mag_view.setImage(slice_mag[np.newaxis], autoLevels=False)
+            ph_view.setImage(slice_phase[np.newaxis], autoLevels=False)
 
-        # Connect callbacks
+        def update_spectrum():
+            try:
+                h, w = roi.size()
+                pos = roi.pos()
+                y0, x0 = math.floor(pos[0]), math.floor(pos[1])
+                y1, x1 = math.ceil(pos[0] + w), math.ceil(pos[1] + h)
+
+                # Clamp coordinates
+                x0 = max(0, x0)
+                y0 = max(0, y0)
+                x1 = min(original_data.shape[2], x1)
+                y1 = min(original_data.shape[1], y1)
+                # Check ROI is valid after clamping
+                if x1 <= x0 or y1 <= y0:
+                    print("ROI outside bounds or zero area.")
+                    return
+
+                roi_data = original_data[:, y0:y1, x0:x1]
+
+                mean_signal = roi_data.mean(axis=(1, 2))
+                freqs, spectrum = spectrum_callback(mean_signal)
+
+                spectrum_curve.setData(freqs, spectrum)
+
+                if self.current_fft_index < len(freqs):
+                    cursor_line.setPos(freqs[self.current_fft_index])
+                    update_fft_images_from_cursor()
+
+            except Exception as e:
+                print("Spectrum update failed:", e)
+
         roi.sigRegionChanged.connect(update_spectrum)
         cursor_line.sigPositionChanged.connect(update_fft_images_from_cursor)
-
-        # Initial draw
         update_spectrum()
-
-        dlg.exec_()
-
-
-        # Synchronize frequency slider with mag/phase viewers
-        def on_frame_changed(index):
-            if 0 <= index < fft_mag.shape[0]:
-                mag_slice = fft_mag[index]
-                ph_slice = fft_phase[index]
-                mag_view.setImage(mag_slice[np.newaxis, :, :], autoLevels=False)
-                ph_view.setImage(ph_slice[np.newaxis, :, :], autoLevels=False)
-
-        raw_view.timeLine.sigPositionChanged.connect(lambda: on_frame_changed(int(raw_view.currentIndex)))
-        on_frame_changed(0)
-
         dlg.exec_()
 
     def run_correlation_analysis(self):
@@ -532,7 +576,6 @@ def show_splash_then_main():
         app.processEvents()
     QTimer.singleShot(1500, lambda: IRViewerPG().show() or (splash.finish(app.activeWindow()) if 'splash' in locals() else None))
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     show_splash_then_main()
