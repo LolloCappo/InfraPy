@@ -562,9 +562,66 @@ class IRViewerPG(QMainWindow):
         if not hasattr(self, 'fs') or self.fs is None:
             print("Sampling frequency not set.")
             return
-    
-        print(f"Running Correlation analysis with fs={self.fs}")
-        # TODO: Implement Correlation analysis & visualization
+
+        data = self.loaded_data
+        fs = self.fs
+        n_frames, h, w = data.shape
+        N = n_frames
+
+        # Frequency sweep vector
+        freq_vector = np.linspace(0, fs/2, 200)  # e.g. 200 points up to Nyquist
+        n_freqs = len(freq_vector)
+
+        # Time vector
+        t = np.arange(N) / fs
+
+        # Preallocate
+        mag_data = np.empty((n_freqs, h, w), dtype=np.float32)
+        phase_data = np.empty((n_freqs, h, w), dtype=np.float32)
+
+        # Progress dialog
+        progress = QProgressDialog("Computing Lock-in Correlation...", "Cancel", 0, n_freqs, self)
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        QApplication.processEvents()
+
+        # Loop over frequencies
+        for k, fl in enumerate(freq_vector):
+            sine = np.sin(2 * np.pi * fl * t)
+            cosine = np.cos(2 * np.pi * fl * t)
+
+            sine_3d = sine[:, None, None]
+            cosine_3d = cosine[:, None, None]
+
+            X = (2 / N) * np.sum(data * cosine_3d, axis=0)
+            Y = (2 / N) * np.sum(data * sine_3d, axis=0)
+
+            mag_data[k] = np.sqrt(X**2 + Y**2)
+            phase_data[k] = np.degrees(np.arctan2(Y, X))
+
+            # update progress
+            progress.setValue(k + 1)
+            QApplication.processEvents()
+            if progress.wasCanceled():
+                print("Lock-in correlation cancelled.")
+                return
+
+        progress.close()
+
+        # ROI callback
+        def spectrum_callback(mean_signal):
+            spectrum = []
+            for fl in freq_vector:
+                sine = np.sin(2 * np.pi * fl * t)
+                cosine = np.cos(2 * np.pi * fl * t)
+                X_roi = (2 / N) * np.sum(mean_signal * cosine)
+                Y_roi = (2 / N) * np.sum(mean_signal * sine)
+                spectrum.append(np.sqrt(X_roi**2 + Y_roi**2))
+            return freq_vector, np.array(spectrum)
+
+        # Show viewer (same as FFT)
+        self.show_frequency_analysis_viewer(data, freq_vector, mag_data, phase_data, spectrum_callback)
 
 def show_splash_then_main():
     app = QApplication(sys.argv)
