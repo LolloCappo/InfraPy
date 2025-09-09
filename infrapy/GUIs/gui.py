@@ -240,9 +240,10 @@ class IRViewerPG(QMainWindow):
         radiation_action = QAction("Radiation", self)
         analysis_menu.addAction(radiation_action)
         radiation_action.triggered.connect(lambda: self.show_analysis_window("Radiation Analysis", "Radiation tools go here."))
-        time_domain_action = QAction("Time domain", self)
-        time_domain_action.triggered.connect(lambda: self.show_analysis_window("Time Domain Analysis", "Time domain tools go here."))
-        analysis_menu.addAction(time_domain_action)
+
+        time_action = QAction("Time Domain Analysis", self)
+        time_action.triggered.connect(self.run_time_analysis)
+        analysis_menu.addAction(time_action)
   
         freq_domain_menu = analysis_menu.addMenu("Frequency domain")
         fft_action = QAction("Fast Fourier Transform", self)
@@ -413,6 +414,18 @@ class IRViewerPG(QMainWindow):
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel(text))
         dlg.exec_()
+        
+    def run_time_analysis(self):
+        if self.loaded_data is None:
+            print("No video loaded.")
+            return
+
+        if not hasattr(self, 'fs') or self.fs is None:
+            print("Sampling frequency not set.")
+            return
+
+        print(f"Running Time-Domain analysis with fs={self.fs}")
+        self.show_time_analysis_viewer(self.loaded_data, self.fs)
 
     def run_fft_analysis(self):
         if self.loaded_data is None or not hasattr(self, 'fs') or self.fs is None:
@@ -622,6 +635,111 @@ class IRViewerPG(QMainWindow):
 
         # Show viewer (same as FFT)
         self.show_frequency_analysis_viewer(data, freq_vector, mag_data, phase_data, spectrum_callback)
+
+    def show_time_analysis_viewer(self, data, fs):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Time Domain Analysis")
+        dlg.resize(self.size())
+        layout = QVBoxLayout(dlg)
+
+        # --- Top row: video viewer
+        top = QHBoxLayout()
+        layout.addLayout(top)
+
+        raw_view = pg.ImageView()
+        raw_view.setImage(data, autoLevels=True)
+        raw_view.ui.menuBtn.hide()
+        raw_view.ui.roiBtn.hide()
+        top.addWidget(raw_view)
+
+        # --- Bottom: time-series plot
+        time_plot = pg.PlotWidget()
+        time_plot.setLabel("bottom", "Time [s]")
+        time_plot.setLabel("left", "Intensity")
+        layout.addWidget(time_plot)
+
+        # Storage for ROIs and their plots
+        roi_list = []
+        curves = []
+        colors = ["r", "g", "b", "y", "c", "m", "w"]
+
+        # --- Controls: checkboxes for processing
+        ctrl_layout = QHBoxLayout()
+        layout.addLayout(ctrl_layout)
+        detrend_cb = QPushButton("Detrend")
+        detrend_cb.setCheckable(True)
+        filter_cb = QPushButton("Bandpass")
+        filter_cb.setCheckable(True)
+        smooth_cb = QPushButton("Smooth")
+        smooth_cb.setCheckable(True)
+        ctrl_layout.addWidget(detrend_cb)
+        ctrl_layout.addWidget(filter_cb)
+        ctrl_layout.addWidget(smooth_cb)
+
+        t = np.arange(data.shape[0]) / fs
+
+        def process_signal(sig):
+            """Apply processing options to signal"""
+            out = sig.copy()
+            if detrend_cb.isChecked():
+                out = out - np.polyval(np.polyfit(t, out, 1), t)  # linear detrend
+            if filter_cb.isChecked():
+                from scipy.signal import butter, filtfilt
+                b, a = butter(3, [0.1, 0.3], btype="band")  # normalized freqs (fs will adjust later if needed)
+                out = filtfilt(b, a, out)
+            if smooth_cb.isChecked():
+                win = 5
+                out = np.convolve(out, np.ones(win)/win, mode="same")
+            return out
+
+        def update_all_traces():
+            for roi, curve in zip(roi_list, curves):
+                pos = roi.pos()
+                size = roi.size()
+                x0, y0 = int(pos[0]), int(pos[1])
+                w, h = int(size[0]), int(size[1])
+                x1, y1 = x0 + w, y0 + h
+
+                # Clamp to bounds
+                x0 = max(0, x0); y0 = max(0, y0)
+                x1 = min(data.shape[2], x1)
+                y1 = min(data.shape[1], y1)
+
+                if x1 <= x0 or y1 <= y0:
+                    continue
+
+                roi_data = data[:, y0:y1, x0:x1]
+                mean_signal = roi_data.mean(axis=(1, 2))
+
+                curve.setData(t, process_signal(mean_signal))
+
+        def add_roi():
+            color = colors[len(roi_list) % len(colors)]
+            roi = pg.RectROI([30+len(roi_list)*10, 30], [40, 40],
+                            pen=pg.mkPen(color, width=2))
+            raw_view.addItem(roi)
+            roi_list.append(roi)
+
+            curve = time_plot.plot(pen=pg.mkPen(color, width=2))
+            curves.append(curve)
+
+            roi.sigRegionChanged.connect(update_all_traces)
+            update_all_traces()
+
+        # Start with one ROI
+        add_roi()
+
+        # Ctrl-click on video to add more ROIs
+        raw_view.scene.sigMouseClicked.connect(
+            lambda ev: add_roi() if ev.modifiers() & Qt.ControlModifier else None
+        )
+
+        # Update when toggles are clicked
+        detrend_cb.clicked.connect(update_all_traces)
+        filter_cb.clicked.connect(update_all_traces)
+        smooth_cb.clicked.connect(update_all_traces)
+
+        dlg.exec_()
 
 def show_splash_then_main():
     app = QApplication(sys.argv)
