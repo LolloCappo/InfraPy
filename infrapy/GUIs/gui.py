@@ -319,7 +319,7 @@ class IRViewerPG(QMainWindow):
     def load_ir_data(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open IR File", "",
-            "IR Files (*.tif *.tiff *.csv *.sfmov *.npy *.npz);;All Files (*)"
+            "IR Files (*.tif *.tiff *.csv *.sfmov *.npy *.npz *.hcc);;All Files (*)"
         )
         if not file_path:
             return
