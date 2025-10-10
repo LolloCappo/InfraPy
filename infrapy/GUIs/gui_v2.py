@@ -3,10 +3,13 @@
 InfraPy GUI
 -----------
 A PyQt5/pyqtgraph-based viewer for infrared (IR) data with
-time-domain and frequency-domain analysis (FFT and lock-in correlation).
+time-domain and frequency-domain analysis (FFT and lock-in correlation),
+plus spatial cropping (rectangular or circular) on the main viewer.
 
-This refactor preserves functionality while improving readability,
-maintainability, and robustness (imports, typing, docstrings, and style).
+- Sampling Frequency dialog & progress dialogs explicitly shown.
+- Crop feature: Add Rect/Circle ROI, Apply Crop, Remove ROI, Undo Crop.
+- Circle crop is forced to perfect circle (1:1) and uses transform-aware slicing
+  to match exactly what you draw, with zeros outside circle (within bounding box).
 """
 
 from __future__ import annotations
@@ -31,22 +34,23 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QProgressDialog,
+    QInputDialog,
     QPushButton,
     QSplashScreen,
     QVBoxLayout,
     QWidget,
 )
 
-# High-DPI configuration (same behavior, set as early as possible)
+# High-DPI configuration (as early as possible)
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps)
 
-# Make local 'infrapy' importable (same two-levels-up logic)
+# Make local 'infrapy' importable (two levels up)
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 # Project imports
 from infrapy import io  # IR data loading module
-from infrapy.thermoelasticity import lock_in_analysis  # noqa: F401  (import kept as in original)
+from infrapy.thermoelasticity import lock_in_analysis  # noqa: F401  (kept as in original)
 
 import pyqtgraph as pg
 
@@ -91,7 +95,6 @@ class TerminalWindow(QDialog):
         self.text_area.setText("".join(self._log))
 
     def flush(self) -> None:
-        # Invalidate buffers if needed; kept for compatibility.
         pass
 
 
@@ -241,13 +244,20 @@ class IRViewerPG(QMainWindow):
                 screen_size.top() + (screen_size.height() - height) // 2,
             )
 
-        # State
+        # ---- State
         self.loaded_data: Optional[np.ndarray] = None  # shape: (t, y, x)
         self.original_data: Optional[np.ndarray] = None
         self.current_frame: int = 0
         self.fs: Optional[float] = None
         self.use_time_axis: bool = False
         self.current_fft_index: int = 0
+
+        # --- Crop state
+        self.crop_roi: Optional[pg.ROI] = None
+        self._backup_loaded_data: Optional[np.ndarray] = None
+        self._backup_original_data: Optional[np.ndarray] = None
+        self._last_crop_was_ellipse: bool = False  # True when circle mode active
+        self._circle_update_lock: bool = False     # prevent re-entrant ROI updates
 
         # Terminal window (redirect stdout/stderr)
         self.terminal_window = TerminalWindow(self)
@@ -385,6 +395,37 @@ class IRViewerPG(QMainWindow):
         self.axis_toggle.toggled.connect(self.toggle_time_axis)
         bottom.addWidget(self.axis_toggle)
 
+        # --- Crop controls
+        self.add_rect_roi_btn = QPushButton("Add Rect ROI")
+        self.add_rect_roi_btn.setToolTip("Add a rectangular ROI to crop the stack")
+        self.add_rect_roi_btn.clicked.connect(self.add_rect_roi)
+        self.add_rect_roi_btn.setEnabled(False)
+        bottom.addWidget(self.add_rect_roi_btn)
+
+        self.add_circle_roi_btn = QPushButton("Add Circle ROI")
+        self.add_circle_roi_btn.setToolTip("Add a circular ROI to crop the stack (forced 1:1)")
+        self.add_circle_roi_btn.clicked.connect(self.add_circle_roi)
+        self.add_circle_roi_btn.setEnabled(False)
+        bottom.addWidget(self.add_circle_roi_btn)
+
+        self.apply_crop_btn = QPushButton("Apply Crop")
+        self.apply_crop_btn.setToolTip("Apply the current ROI as a spatial crop to the entire stack")
+        self.apply_crop_btn.setEnabled(False)
+        self.apply_crop_btn.clicked.connect(self.apply_spatial_crop)
+        bottom.addWidget(self.apply_crop_btn)
+
+        self.remove_roi_btn = QPushButton("Remove ROI")
+        self.remove_roi_btn.setToolTip("Remove the current ROI overlay")
+        self.remove_roi_btn.setEnabled(False)
+        self.remove_roi_btn.clicked.connect(self.remove_crop_roi)
+        bottom.addWidget(self.remove_roi_btn)
+
+        self.undo_crop_btn = QPushButton("Undo Crop")
+        self.undo_crop_btn.setToolTip("Restore the dataset from before the last crop")
+        self.undo_crop_btn.setEnabled(False)
+        self.undo_crop_btn.clicked.connect(self.undo_spatial_crop)
+        bottom.addWidget(self.undo_crop_btn)
+
         vlayout.addLayout(bottom)
 
     # ----- Axis / slider updates
@@ -418,8 +459,11 @@ class IRViewerPG(QMainWindow):
             self.original_data = data
             self.loaded_data = data.copy()
 
+            # Clear any previous crop ROI
+            self.remove_crop_roi()
+
             # Prompt for sampling frequency
-            fs, ok = QtWidgets.QInputDialog.getDouble(  # type: ignore[attr-defined]
+            fs, ok = QInputDialog.getDouble(
                 self, "Sampling Frequency", "Enter sampling frequency [Hz]:", 50.0, 0.01, 1e6, 2
             )
             if not ok:
@@ -431,6 +475,10 @@ class IRViewerPG(QMainWindow):
             self.update_viewer()
             self._init_slider()
             self.undo_button.setEnabled(False)
+
+            # Enable crop placement buttons now that we have data
+            self.add_rect_roi_btn.setEnabled(True)
+            self.add_circle_roi_btn.setEnabled(True)
 
         except Exception as e:
             print(f"Error loading data: {e}")
@@ -540,6 +588,7 @@ class IRViewerPG(QMainWindow):
         progress.setWindowModality(Qt.ApplicationModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
+        progress.show()  # ensure dialog is visible
         QApplication.processEvents()
 
         # Preallocate arrays
@@ -706,6 +755,7 @@ class IRViewerPG(QMainWindow):
         progress.setWindowModality(Qt.ApplicationModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
+        progress.show()  # ensure dialog is visible
         QApplication.processEvents()
 
         # Loop over frequencies (preserved algorithm)
@@ -739,7 +789,9 @@ class IRViewerPG(QMainWindow):
                 spectrum_list.append(np.sqrt(X_roi ** 2 + Y_roi ** 2))
             return freq_vector, np.array(spectrum_list)
 
-        self._show_frequency_analysis_viewer(data, freq_vector, mag_data, phase_data, spectrum_callback)
+        self._show_frequency_analysis_viewer(
+            data, freq_vector, mag_data, phase_data, spectrum_callback
+        )
 
     def _show_time_analysis_viewer(self, data: np.ndarray, fs: float) -> None:
         dlg = QDialog(self)
@@ -845,6 +897,208 @@ class IRViewerPG(QMainWindow):
 
         dlg.exec_()
 
+    # ---- Crop helpers -------------------------------------------------
+
+    def _get_image_item(self):
+        """Get the underlying ImageItem from ImageView."""
+        img_item = getattr(self.image_view, "imageItem", None)
+        if img_item is None and hasattr(self.image_view, "getImageItem"):
+            img_item = self.image_view.getImageItem()
+        return img_item
+
+    def _ensure_no_existing_roi(self) -> None:
+        """Remove any existing crop ROI from the view."""
+        if self.crop_roi is not None:
+            try:
+                self.image_view.removeItem(self.crop_roi)
+            except Exception:
+                pass
+            self.crop_roi = None
+        self.apply_crop_btn.setEnabled(False)
+        self.remove_roi_btn.setEnabled(False)
+
+    def add_rect_roi(self) -> None:
+        """Add a rectangular ROI to the image view."""
+        if self.loaded_data is None:
+            print("No video loaded.")
+            return
+        self._ensure_no_existing_roi()
+        _, H, W = self.loaded_data.shape
+        w = max(20, int(W * 0.25))
+        h = max(20, int(H * 0.25))
+        x = int((W - w) / 2)
+        y = int((H - h) / 2)
+        self.crop_roi = pg.RectROI([x, y], [w, h], pen=pg.mkPen('y', width=2))
+        self.image_view.addItem(self.crop_roi)
+        self._last_crop_was_ellipse = False
+        self.apply_crop_btn.setEnabled(True)
+        self.remove_roi_btn.setEnabled(True)
+
+    def add_circle_roi(self) -> None:
+        """Add a circular ROI and enforce 1:1 aspect during any resize/move."""
+        if self.loaded_data is None:
+            print("No video loaded.")
+            return
+        self._ensure_no_existing_roi()
+        _, H, W = self.loaded_data.shape
+        d = max(20, int(min(W, H) * 0.4))
+        x = int((W - d) / 2)
+        y = int((H - d) / 2)
+        self.crop_roi = pg.EllipseROI([x, y], [d, d], pen=pg.mkPen('c', width=2))
+        self.image_view.addItem(self.crop_roi)
+        # Force perfect circle as user interacts
+        self.crop_roi.sigRegionChanged.connect(self._enforce_circular_roi)
+        self._enforce_circular_roi()  # ensure initial 1:1
+        self._last_crop_was_ellipse = True
+        self.apply_crop_btn.setEnabled(True)
+        self.remove_roi_btn.setEnabled(True)
+
+    def _enforce_circular_roi(self) -> None:
+        """Keep the EllipseROI strictly circular (1:1), preserving its center."""
+        if self.crop_roi is None or self._circle_update_lock:
+            return
+        try:
+            self._circle_update_lock = True
+            pos = self.crop_roi.pos()    # (x, y)
+            size = self.crop_roi.size()  # (w, h)
+            w = float(size[0])
+            h = float(size[1])
+            if w <= 0 or h <= 0:
+                return
+            s = min(w, h)  # target side
+            cx = float(pos[0]) + w / 2.0
+            cy = float(pos[1]) + h / 2.0
+            new_pos = [cx - s / 2.0, cy - s / 2.0]
+            self.crop_roi.setPos(new_pos, finish=False)
+            self.crop_roi.setSize([s, s], finish=False)
+        finally:
+            self._circle_update_lock = False
+
+    def remove_crop_roi(self) -> None:
+        """Remove only the ROI overlay (no data changes)."""
+        self._ensure_no_existing_roi()
+
+    def _roi_bounds_clamped(self) -> Optional[tuple[int, int, int, int]]:
+        """
+        Return (x0, y0, x1, y1) integer bounds of current ROI in array coordinates,
+        using ROI.getArraySlice for accurate mapping (accounts for transforms).
+        """
+        if self.loaded_data is None or self.crop_roi is None:
+            return None
+
+        # Current 2D frame (t, y, x) -> (y, x)
+        img2d = self.loaded_data[self.current_frame]
+
+        img_item = self._get_image_item()
+        if img_item is None:
+            print("Internal error: ImageItem not found.")
+            return None
+
+        try:
+            slices, _ = self.crop_roi.getArraySlice(img2d, img_item)  # (slice_y, slice_x)
+            sy, sx = slices
+
+            y0 = 0 if sy.start is None else int(sy.start)
+            y1 = img2d.shape[0] if sy.stop is None else int(sy.stop)
+            x0 = 0 if sx.start is None else int(sx.start)
+            x1 = img2d.shape[1] if sx.stop is None else int(sx.stop)
+
+            # Clamp
+            y0 = max(0, min(y0, img2d.shape[0]))
+            y1 = max(0, min(y1, img2d.shape[0]))
+            x0 = max(0, min(x0, img2d.shape[1]))
+            x1 = max(0, min(x1, img2d.shape[1]))
+
+            if x1 <= x0 or y1 <= y0:
+                return None
+
+            return x0, y0, x1, y1
+        except Exception as e:
+            print(f"Failed to compute ROI slice: {e}")
+            return None
+
+    def apply_spatial_crop(self) -> None:
+        """
+        Apply the current ROI to crop the stack (t, y, x) using precise bounds
+        from ROI.getArraySlice. Rect ROI -> rectangular crop.
+        Circle ROI -> rectangular crop + zero outside the circle (keeps analyses intact).
+        """
+        if self.loaded_data is None or self.crop_roi is None:
+            print("No ROI to apply.")
+            return
+
+        bounds = self._roi_bounds_clamped()
+        if bounds is None:
+            print("ROI out of bounds or zero area.")
+            return
+
+        x0, y0, x1, y1 = bounds
+
+        # Save current histogram levels so display doesn't "binarize" after masking
+        hw = self.image_view.getHistogramWidget() if hasattr(self.image_view, "getHistogramWidget") \
+            else self.image_view.ui.histogram
+        prev_levels = hw.getLevels()
+
+        # Backups for Undo Crop
+        self._backup_loaded_data = self.loaded_data
+        self._backup_original_data = self.original_data
+
+        # Crop current and original datasets (t, y, x)
+        cropped_loaded = self.loaded_data[:, y0:y1, x0:x1]
+        cropped_original = None if self.original_data is None else self.original_data[:, y0:y1, x0:x1]
+
+        if self._last_crop_was_ellipse:
+            # Build a circular mask in the cropped rectangle, centered in the box
+            h = y1 - y0
+            w = x1 - x0
+            # perfect circle: use min(h, w) as diameter; center at rectangle center
+            r = min(h, w) / 2.0
+            cy = (h - 1) / 2.0
+            cx = (w - 1) / 2.0
+            yy, xx = np.ogrid[:h, :w]
+            circle = ((yy - cy) ** 2 + (xx - cx) ** 2) <= (r ** 2)
+
+            # Apply mask as zeros outside the circle (preserve dtype)
+            mask_loaded = circle.astype(cropped_loaded.dtype, copy=False)[None, :, :]
+            cropped_loaded = cropped_loaded * mask_loaded
+
+            if cropped_original is not None:
+                mask_original = circle.astype(cropped_original.dtype, copy=False)[None, :, :]
+                cropped_original = cropped_original * mask_original
+
+        # Commit
+        self.loaded_data = cropped_loaded
+        if cropped_original is not None:
+            self.original_data = cropped_original
+
+        # Clean up ROI and refresh UI
+        self._ensure_no_existing_roi()
+        self.current_frame = 0
+        self._init_slider()
+        self.update_viewer()
+
+        # Restore histogram levels so zeros outside circle don't skew contrast
+        hw.setLevels(*prev_levels)
+
+        # Enable Undo Crop
+        self.undo_crop_btn.setEnabled(True)
+        print(f"Cropped to x:[{x0},{x1}), y:[{y0},{y1}) ; shape -> {self.loaded_data.shape}")
+
+    def undo_spatial_crop(self) -> None:
+        """Restore dataset to state before last crop."""
+        if self._backup_loaded_data is None:
+            print("No crop to undo.")
+            return
+        self.loaded_data = self._backup_loaded_data
+        self.original_data = self._backup_original_data
+        self._backup_loaded_data = None
+        self._backup_original_data = None
+        self.current_frame = 0
+        self._init_slider()
+        self.update_viewer()
+        self.undo_crop_btn.setEnabled(False)
+        print("Crop undone.")
+
 
 # -------------------------
 # App bootstrap with splash
@@ -873,4 +1127,5 @@ def show_splash_then_main() -> None:
 
 
 if __name__ == "__main__":
+
     show_splash_then_main()
