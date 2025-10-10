@@ -221,7 +221,7 @@ class QRangeSlider(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
         self._dragging_start = False
-               self._dragging_end = False
+        self._dragging_end = False
 
 
 # -------------------------
