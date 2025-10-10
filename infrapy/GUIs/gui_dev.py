@@ -2,14 +2,18 @@
 """
 InfraPy GUI
 -----------
-A PyQt5/pyqtgraph-based viewer for infrared (IR) data with
-time-domain and frequency-domain analysis (FFT and lock-in correlation),
-plus spatial cropping (rectangular or circular) on the main viewer.
+A PyQt5/pyqtgraph-based viewer for infrared (IR) data with:
+- Time-domain and frequency-domain analysis (FFT and lock-in correlation)
+- Spatial cropping in the main viewer (rectangular or circular)
+- Circle ROI info readout (center & diameter in data coordinates)
+- Export FFT magnitude map to .npy
 
-- Sampling Frequency dialog & progress dialogs explicitly shown.
-- Crop feature: Add Rect/Circle ROI, Apply Crop, Remove ROI, Undo Crop.
-- Circle crop is forced to perfect circle (1:1) and uses transform-aware slicing
-  to match exactly what you draw, with zeros outside circle (within bounding box).
+Notes
+-----
+- Circle crop: forced 1:1 while interacting; crop uses transform-aware slicing
+  so the region matches what you draw. Pixels outside the circle within the
+  bounding box are set to zero (keeps analyses working without NaNs).
+- FFT viewer includes a button to save the full magnitude cube as .npy.
 """
 
 from __future__ import annotations
@@ -217,7 +221,7 @@ class QRangeSlider(QWidget):
 
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
         self._dragging_start = False
-        self._dragging_end = False
+               self._dragging_end = False
 
 
 # -------------------------
@@ -426,6 +430,10 @@ class IRViewerPG(QMainWindow):
         self.undo_crop_btn.clicked.connect(self.undo_spatial_crop)
         bottom.addWidget(self.undo_crop_btn)
 
+        # --- Circle ROI info label (center & diameter)
+        self.circle_info_label = QLabel("Circle ROI: —")
+        bottom.addWidget(self.circle_info_label)
+
         vlayout.addLayout(bottom)
 
     # ----- Axis / slider updates
@@ -461,6 +469,7 @@ class IRViewerPG(QMainWindow):
 
             # Clear any previous crop ROI
             self.remove_crop_roi()
+            self.circle_info_label.setText("Circle ROI: —")
 
             # Prompt for sampling frequency
             fs, ok = QInputDialog.getDouble(
@@ -597,7 +606,7 @@ class IRViewerPG(QMainWindow):
         # Mean removal across time axis
         time_series = data - data.mean(axis=0)
 
-        # Compute FFT for each pixel column along time (preserved algorithm)
+        # Compute FFT for each pixel along time (preserved algorithm)
         for i in range(h):
             for j in range(w):
                 signal = time_series[:, i, j]
@@ -618,11 +627,12 @@ class IRViewerPG(QMainWindow):
             spectrum = np.abs(np.fft.rfft(mean_signal - mean_signal.mean()))
             return fft_freqs, spectrum
 
-        progress.setValue(h)  # cosmetic: mark completion at max
+        progress.setValue(h)
         progress.close()
 
+        # enable_save_mag=True -> show "Save FFT Magnitude (.npy)" button
         self._show_frequency_analysis_viewer(
-            data, fft_freqs, fft_mag, fft_phase, spectrum_callback
+            data, fft_freqs, fft_mag, fft_phase, spectrum_callback, enable_save_mag=True
         )
 
     def _show_frequency_analysis_viewer(
@@ -632,15 +642,16 @@ class IRViewerPG(QMainWindow):
         mag_data: np.ndarray,
         phase_data: np.ndarray,
         spectrum_callback: Callable[[np.ndarray], Tuple[np.ndarray, np.ndarray]],
+        enable_save_mag: bool = False,
     ) -> None:
         dlg = QDialog(self)
         dlg.setWindowTitle("Frequency Domain Analysis")
         dlg.resize(self.size())
-        layout = QVBoxLayout(dlg)
+        vbox = QVBoxLayout(dlg)
 
         # Top row viewers
         top = QHBoxLayout()
-        layout.addLayout(top)
+        vbox.addLayout(top)
 
         raw_view = pg.ImageView()
         raw_view.setImage(original_data, autoLevels=True)
@@ -663,7 +674,7 @@ class IRViewerPG(QMainWindow):
         spectrum_plot = pg.PlotWidget()
         spectrum_plot.setLabel("bottom", "Frequency [Hz]")
         spectrum_plot.setLabel("left", "Amplitude")
-        layout.addWidget(spectrum_plot)
+        vbox.addWidget(spectrum_plot)
 
         spectrum_curve = spectrum_plot.plot([], pen="y")
         cursor_line = pg.InfiniteLine(angle=90, movable=True, pen="r")
@@ -672,11 +683,33 @@ class IRViewerPG(QMainWindow):
         roi = pg.RectROI([30, 30], [40, 40], pen=pg.mkPen("r", width=2))
         raw_view.addItem(roi)
 
-        # Preferred minimum sizes (same intent)
+        # Preferred minimum sizes
         raw_view.setMinimumSize(400, 400)
         mag_view.setMinimumSize(400, 400)
         ph_view.setMinimumSize(400, 400)
         spectrum_plot.setMinimumHeight(150)
+
+        # Save button row (optional for FFT)
+        if enable_save_mag:
+            save_row = QHBoxLayout()
+            vbox.addLayout(save_row)
+            save_btn = QPushButton("Save FFT Magnitude (.npy)")
+            save_btn.setToolTip("Save the full FFT magnitude array (n_freqs × H × W) to .npy")
+            save_row.addWidget(save_btn)
+            save_row.addStretch(1)
+
+            def _save_mag():
+                path, _ = QFileDialog.getSaveFileName(
+                    dlg, "Save FFT Magnitude", "fft_magnitude.npy", "NumPy binary (*.npy)"
+                )
+                if path:
+                    try:
+                        np.save(path, mag_data)
+                        print(f"Saved FFT magnitude to: {path}")
+                    except Exception as e:
+                        print(f"Failed to save FFT magnitude: {e}")
+
+            save_btn.clicked.connect(_save_mag)
 
         # -- update helpers
 
@@ -694,7 +727,7 @@ class IRViewerPG(QMainWindow):
                 h_, w_ = roi.size()
                 pos = roi.pos()
 
-                # NOTE: pos returns (x, y); keep original axis mapping logic
+                # NOTE: pos returns (x, y); maintain original mapping
                 y0, x0 = math.floor(pos[0]), math.floor(pos[1])
                 y1, x1 = math.ceil(pos[0] + w_), math.ceil(pos[1] + h_)
 
@@ -704,7 +737,6 @@ class IRViewerPG(QMainWindow):
                 x1 = min(original_data.shape[2], x1)
                 y1 = min(original_data.shape[1], y1)
 
-                # Validate ROI after clamping
                 if x1 <= x0 or y1 <= y0:
                     print("ROI outside bounds or zero area.")
                     return
@@ -755,7 +787,7 @@ class IRViewerPG(QMainWindow):
         progress.setWindowModality(Qt.ApplicationModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
-        progress.show()  # ensure dialog is visible
+        progress.show()
         QApplication.processEvents()
 
         # Loop over frequencies (preserved algorithm)
@@ -790,7 +822,7 @@ class IRViewerPG(QMainWindow):
             return freq_vector, np.array(spectrum_list)
 
         self._show_frequency_analysis_viewer(
-            data, freq_vector, mag_data, phase_data, spectrum_callback
+            data, freq_vector, mag_data, phase_data, spectrum_callback, enable_save_mag=False
         )
 
     def _show_time_analysis_viewer(self, data: np.ndarray, fs: float) -> None:
@@ -952,6 +984,8 @@ class IRViewerPG(QMainWindow):
         self._last_crop_was_ellipse = True
         self.apply_crop_btn.setEnabled(True)
         self.remove_roi_btn.setEnabled(True)
+        # Update label initially
+        self._update_circle_info_label()
 
     def _enforce_circular_roi(self) -> None:
         """Keep the EllipseROI strictly circular (1:1), preserving its center."""
@@ -973,10 +1007,30 @@ class IRViewerPG(QMainWindow):
             self.crop_roi.setSize([s, s], finish=False)
         finally:
             self._circle_update_lock = False
+        # Update readout after enforcing circle
+        self._update_circle_info_label()
+
+    def _update_circle_info_label(self) -> None:
+        """Show circle center (x,y) and diameter (px) in data coordinates."""
+        if self.crop_roi is None or not self._last_crop_was_ellipse:
+            self.circle_info_label.setText("Circle ROI: —")
+            return
+        bounds = self._roi_bounds_clamped()
+        if bounds is None:
+            self.circle_info_label.setText("Circle ROI: —")
+            return
+        x0, y0, x1, y1 = bounds
+        cx = (x0 + x1) / 2.0
+        cy = (y0 + y1) / 2.0
+        d = min(x1 - x0, y1 - y0)
+        self.circle_info_label.setText(
+            f"Circle ROI: center=({int(round(cx))}, {int(round(cy))}), d={int(round(d))} px"
+        )
 
     def remove_crop_roi(self) -> None:
         """Remove only the ROI overlay (no data changes)."""
         self._ensure_no_existing_roi()
+        self.circle_info_label.setText("Circle ROI: —")
 
     def _roi_bounds_clamped(self) -> Optional[tuple[int, int, int, int]]:
         """
@@ -1080,6 +1134,10 @@ class IRViewerPG(QMainWindow):
         # Restore histogram levels so zeros outside circle don't skew contrast
         hw.setLevels(*prev_levels)
 
+        # Keep last circle readout for reference (user can reuse values)
+        # If you prefer clearing it, uncomment the next line:
+        # self.circle_info_label.setText("Circle ROI: —")
+
         # Enable Undo Crop
         self.undo_crop_btn.setEnabled(True)
         print(f"Cropped to x:[{x0},{x1}), y:[{y0},{y1}) ; shape -> {self.loaded_data.shape}")
@@ -1107,7 +1165,7 @@ class IRViewerPG(QMainWindow):
 def show_splash_then_main() -> None:
     app = QApplication(sys.argv)
 
-    # Look for an icon next to this file (unchanged logic)
+    # Look for an icon next to this file
     logo = Path(__file__).parent / "icon.png"
     splash: Optional[QSplashScreen] = None
     if logo.exists():
@@ -1127,5 +1185,4 @@ def show_splash_then_main() -> None:
 
 
 if __name__ == "__main__":
-
     show_splash_then_main()
