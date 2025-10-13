@@ -6,12 +6,13 @@ A PyQt5/pyqtgraph-based viewer for infrared (IR) data with:
 - Time-domain and frequency-domain analysis (FFT and lock-in correlation)
 - Spatial cropping in the main viewer (rectangular or circular)
 - Circle ROI info readout (center & diameter in data coordinates)
+- Enter circle ROI by keyboard (center x, center y, diameter)
 - Export FFT magnitude map to .npy
 
 Notes
 -----
 - Circle crop: forced 1:1 while interacting; crop uses transform-aware slicing
-  so the region matches what you draw. Pixels outside the circle within the
+  so the region matches what you draw/type. Pixels outside the circle within the
   bounding box are set to zero (keeps analyses working without NaNs).
 - FFT viewer includes a button to save the full magnitude cube as .npy.
 """
@@ -33,12 +34,15 @@ from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
+    QFormLayout,
+    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QProgressBar,
     QProgressDialog,
     QInputDialog,
+    QSpinBox,
     QPushButton,
     QSplashScreen,
     QVBoxLayout,
@@ -222,6 +226,55 @@ class QRangeSlider(QWidget):
     def mouseReleaseEvent(self, event) -> None:  # type: ignore[override]
         self._dragging_start = False
         self._dragging_end = False
+
+
+# -------------------------
+# Dialog to enter circle parameters
+# -------------------------
+
+class CircleParamsDialog(QDialog):
+    """Dialog to enter center (x, y) and diameter (px) for circle ROI."""
+
+    def __init__(
+        self,
+        parent: QWidget,
+        width: int,
+        height: int,
+        init_cx: int,
+        init_cy: int,
+        init_d: int,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Set Circle ROI (cx, cy, d)")
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.cx_spin = QSpinBox()
+        self.cy_spin = QSpinBox()
+        self.d_spin = QSpinBox()
+
+        # Ranges in array coordinates
+        self.cx_spin.setRange(0, max(0, width - 1))
+        self.cy_spin.setRange(0, max(0, height - 1))
+        self.d_spin.setRange(1, max(1, min(width, height)))
+
+        self.cx_spin.setValue(int(init_cx))
+        self.cy_spin.setValue(int(init_cy))
+        self.d_spin.setValue(int(init_d))
+
+        form.addRow("Center X (px):", self.cx_spin)
+        form.addRow("Center Y (px):", self.cy_spin)
+        form.addRow("Diameter (px):", self.d_spin)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+    def values(self) -> Tuple[int, int, int]:
+        return int(self.cx_spin.value()), int(self.cy_spin.value()), int(self.d_spin.value())
 
 
 # -------------------------
@@ -430,7 +483,14 @@ class IRViewerPG(QMainWindow):
         self.undo_crop_btn.clicked.connect(self.undo_spatial_crop)
         bottom.addWidget(self.undo_crop_btn)
 
-        # --- Circle ROI info label (center & diameter)
+        # NEW: Set Circle by numbers
+        self.set_circle_btn = QPushButton("Set Circle (cx, cy, d)")
+        self.set_circle_btn.setToolTip("Type center X/Y and diameter to place a precise circle ROI")
+        self.set_circle_btn.setEnabled(False)
+        self.set_circle_btn.clicked.connect(self.set_circle_by_numbers)
+        bottom.addWidget(self.set_circle_btn)
+
+        # Circle ROI info label (center & diameter)
         self.circle_info_label = QLabel("Circle ROI: —")
         bottom.addWidget(self.circle_info_label)
 
@@ -485,9 +545,10 @@ class IRViewerPG(QMainWindow):
             self._init_slider()
             self.undo_button.setEnabled(False)
 
-            # Enable crop placement buttons now that we have data
+            # Enable crop placement + set-circle buttons now that we have data
             self.add_rect_roi_btn.setEnabled(True)
             self.add_circle_roi_btn.setEnabled(True)
+            self.set_circle_btn.setEnabled(True)
 
         except Exception as e:
             print(f"Error loading data: {e}")
@@ -1027,6 +1088,56 @@ class IRViewerPG(QMainWindow):
             f"Circle ROI: center=({int(round(cx))}, {int(round(cy))}), d={int(round(d))} px"
         )
 
+    def set_circle_by_numbers(self) -> None:
+        """Open a dialog to type center and diameter, then place a circle ROI."""
+        if self.loaded_data is None:
+            print("No video loaded.")
+            return
+        _, H, W = self.loaded_data.shape
+
+        # Prefill with current circle if available; else image center & half min dimension
+        if self.crop_roi is not None and self._last_crop_was_ellipse:
+            bounds = self._roi_bounds_clamped()
+            if bounds is not None:
+                x0, y0, x1, y1 = bounds
+                init_cx = int(round((x0 + x1) / 2.0))
+                init_cy = int(round((y0 + y1) / 2.0))
+                init_d = int(round(min(x1 - x0, y1 - y0)))
+            else:
+                init_cx, init_cy, init_d = W // 2, H // 2, max(1, min(W, H) // 2)
+        else:
+            init_cx, init_cy, init_d = W // 2, H // 2, max(1, min(W, H) // 2)
+
+        dlg = CircleParamsDialog(self, W, H, init_cx, init_cy, init_d)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        cx, cy, d = dlg.values()
+
+        # Clamp so the ROI stays inside the image
+        d = max(1, min(d, min(W, H)))
+        half = d / 2.0
+        x0 = int(round(cx - half))
+        y0 = int(round(cy - half))
+        # Adjust to keep inside bounds
+        x0 = max(0, min(x0, W - d))
+        y0 = max(0, min(y0, H - d))
+
+        # Create or reuse the EllipseROI at the specified position/size
+        if self.crop_roi is None or not self._last_crop_was_ellipse:
+            self._ensure_no_existing_roi()
+            self.crop_roi = pg.EllipseROI([x0, y0], [d, d], pen=pg.mkPen('c', width=2))
+            self.image_view.addItem(self.crop_roi)
+            self.crop_roi.sigRegionChanged.connect(self._enforce_circular_roi)
+            self._last_crop_was_ellipse = True
+            self.remove_roi_btn.setEnabled(True)
+        else:
+            self.crop_roi.setPos([x0, y0], finish=False)
+            self.crop_roi.setSize([d, d], finish=False)
+
+        self._enforce_circular_roi()
+        self.apply_crop_btn.setEnabled(True)
+        self._update_circle_info_label()
+
     def remove_crop_roi(self) -> None:
         """Remove only the ROI overlay (no data changes)."""
         self._ensure_no_existing_roi()
@@ -1105,7 +1216,6 @@ class IRViewerPG(QMainWindow):
             # Build a circular mask in the cropped rectangle, centered in the box
             h = y1 - y0
             w = x1 - x0
-            # perfect circle: use min(h, w) as diameter; center at rectangle center
             r = min(h, w) / 2.0
             cy = (h - 1) / 2.0
             cx = (w - 1) / 2.0
@@ -1133,10 +1243,6 @@ class IRViewerPG(QMainWindow):
 
         # Restore histogram levels so zeros outside circle don't skew contrast
         hw.setLevels(*prev_levels)
-
-        # Keep last circle readout for reference (user can reuse values)
-        # If you prefer clearing it, uncomment the next line:
-        # self.circle_info_label.setText("Circle ROI: —")
 
         # Enable Undo Crop
         self.undo_crop_btn.setEnabled(True)
