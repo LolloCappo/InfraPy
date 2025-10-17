@@ -1286,7 +1286,7 @@ def show_splash_then_main() -> None:
         if splash is not None:
             splash.finish(w)
 
-    QTimer.singleShot(1500, _show_main)
+    QTimer.singleShot(1400, _show_main)
     sys.exit(app.exec_())
 
 

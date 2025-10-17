@@ -4,17 +4,16 @@ InfraPy GUI
 -----------
 A PyQt5/pyqtgraph-based viewer for infrared (IR) data with:
 - Time-domain and frequency-domain analysis (FFT and lock-in correlation)
-- Spatial cropping in the main viewer (rectangular or circular)
+- Spatial cropping in the main viewer (rectangular, circular, or polygonal)
 - Circle ROI info readout (center & diameter in data coordinates)
 - Enter circle ROI by keyboard (center x, center y, diameter)
 - Export FFT magnitude map to .npy
 
 Notes
 -----
-- Circle crop: forced 1:1 while interacting; crop uses transform-aware slicing
-  so the region matches what you draw/type. Pixels outside the circle within the
-  bounding box are set to zero (keeps analyses working without NaNs).
-- FFT viewer includes a button to save the full magnitude cube as .npy.
+- Circle & Polygon crops: crop to bounding rectangle and set pixels outside the shape to zero.
+  This preserves array rectangularity so analyses keep working without NaN handling.
+- All ROI → data alignment is transform-aware via ROI.getArraySlice(...) and map via scene→imageItem.
 """
 
 from __future__ import annotations
@@ -23,12 +22,20 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, List
 
 import numpy as np
 from PyQt5 import QtCore
-from PyQt5.QtCore import QTimer, QUrl, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
+from PyQt5.QtCore import QTimer, QUrl, Qt, pyqtSignal, QPointF
+from PyQt5.QtGui import (
+    QColor,
+    QDesktopServices,
+    QIcon,
+    QPainter,
+    QPixmap,
+    QImage,
+    QPolygonF,
+)
 from PyQt5.QtWidgets import (
     QAction,
     QApplication,
@@ -49,7 +56,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-# High-DPI configuration (as early as possible)
+# High-DPI configuration
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps)
 
@@ -58,7 +65,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 
 # Project imports
 from infrapy import io  # IR data loading module
-from infrapy.thermoelasticity import lock_in_analysis  # noqa: F401  (kept as in original)
+from infrapy.thermoelasticity import lock_in_analysis  # noqa: F401  (kept for future use)
 
 import pyqtgraph as pg
 
@@ -94,10 +101,8 @@ class TerminalWindow(QDialog):
         self.text_area.setWordWrap(True)
 
         layout.addWidget(self.text_area)
-
         self._log: list[str] = []
 
-    # Stream-like API (compatible with sys.stdout/sys.stderr)
     def write(self, text: str) -> None:
         self._log.append(text)
         self.text_area.setText("".join(self._log))
@@ -128,7 +133,6 @@ class QRangeSlider(QWidget):
         self.setMinimumSize(150, 30)
         self.setMouseTracking(True)
 
-    # Public API (unchanged behavior)
     def setMinimum(self, val: int) -> None:
         self._min = val
         if self._start < val:
@@ -157,12 +161,10 @@ class QRangeSlider(QWidget):
     def value(self) -> Tuple[int, int]:
         return self._start, self._end
 
-    # Painting & interaction (unchanged visuals)
     def paintEvent(self, event) -> None:  # type: ignore[override]
         p = QPainter(self)
         rect = self.rect()
 
-        # Background bar
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(200, 200, 200))
         p.drawRect(rect)
@@ -174,11 +176,9 @@ class QRangeSlider(QWidget):
         start_x = int((self._start - self._min) / total_range * rect.width())
         end_x = int((self._end - self._min) / total_range * rect.width())
 
-        # Selected range bar
         p.setBrush(QColor(100, 150, 200))
         p.drawRect(start_x, 0, max(1, end_x - start_x), rect.height())
 
-        # Handles
         p.setBrush(QColor(50, 50, 150))
         p.drawRect(start_x - self._handle_width // 2, 0, self._handle_width, rect.height())
         p.drawRect(end_x - self._handle_width // 2, 0, self._handle_width, rect.height())
@@ -289,7 +289,7 @@ class IRViewerPG(QMainWindow):
         self.setWindowTitle("INFRAPY")
         self.setWindowIcon(QIcon("infrapy/GUIs/icon.png"))
 
-        # Window sizing relative to current screen
+        # Window sizing
         screen = QApplication.primaryScreen()
         screen_size = screen.availableGeometry() if screen else None
         if screen_size:
@@ -302,7 +302,7 @@ class IRViewerPG(QMainWindow):
             )
 
         # ---- State
-        self.loaded_data: Optional[np.ndarray] = None  # shape: (t, y, x)
+        self.loaded_data: Optional[np.ndarray] = None  # (t, y, x)
         self.original_data: Optional[np.ndarray] = None
         self.current_frame: int = 0
         self.fs: Optional[float] = None
@@ -313,8 +313,9 @@ class IRViewerPG(QMainWindow):
         self.crop_roi: Optional[pg.ROI] = None
         self._backup_loaded_data: Optional[np.ndarray] = None
         self._backup_original_data: Optional[np.ndarray] = None
-        self._last_crop_was_ellipse: bool = False  # True when circle mode active
-        self._circle_update_lock: bool = False     # prevent re-entrant ROI updates
+        self._last_crop_was_ellipse: bool = False
+        self._last_crop_was_polygon: bool = False
+        self._circle_update_lock: bool = False
 
         # Terminal window (redirect stdout/stderr)
         self.terminal_window = TerminalWindow(self)
@@ -327,7 +328,6 @@ class IRViewerPG(QMainWindow):
     # ----- Window utilities
 
     def fit_to_screen(self) -> None:
-        """Resize and center the window on the current screen."""
         screen = QApplication.screenAt(self.pos())
         if not screen:
             return
@@ -393,7 +393,6 @@ class IRViewerPG(QMainWindow):
 
         # Help
         help_menu = menubar.addMenu("Help")
-
         doc_action = QAction("Documentation", self)
         doc_action.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(DOC_URL)))
         help_menu.addAction(doc_action)
@@ -409,12 +408,10 @@ class IRViewerPG(QMainWindow):
         vlayout = QVBoxLayout(central)
         self.setCentralWidget(central)
 
-        # Progress bar (kept hidden by default)
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         vlayout.addWidget(self.progress_bar)
 
-        # Image viewer row
         layout = QHBoxLayout()
         self.image_view = pg.ImageView()
         self.image_view.ui.roiBtn.show()
@@ -425,7 +422,6 @@ class IRViewerPG(QMainWindow):
         layout.addWidget(self.image_view)
         vlayout.addLayout(layout)
 
-        # Bottom controls
         bottom = QHBoxLayout()
 
         self.trim_slider = QRangeSlider()
@@ -446,51 +442,50 @@ class IRViewerPG(QMainWindow):
         self.frame_label = QLabel("Frame: 0 / 0")
         bottom.addWidget(self.frame_label)
 
-        # Time axis toggle
         self.axis_toggle = QPushButton("Show Time [s]")
         self.axis_toggle.setCheckable(True)
         self.axis_toggle.toggled.connect(self.toggle_time_axis)
         bottom.addWidget(self.axis_toggle)
 
-        # --- Crop controls
         self.add_rect_roi_btn = QPushButton("Add Rect ROI")
-        self.add_rect_roi_btn.setToolTip("Add a rectangular ROI to crop the stack")
         self.add_rect_roi_btn.clicked.connect(self.add_rect_roi)
         self.add_rect_roi_btn.setEnabled(False)
         bottom.addWidget(self.add_rect_roi_btn)
 
         self.add_circle_roi_btn = QPushButton("Add Circle ROI")
-        self.add_circle_roi_btn.setToolTip("Add a circular ROI to crop the stack (forced 1:1)")
+        self.add_circle_roi_btn.setToolTip("Circular ROI (forced 1:1)")
         self.add_circle_roi_btn.clicked.connect(self.add_circle_roi)
         self.add_circle_roi_btn.setEnabled(False)
         bottom.addWidget(self.add_circle_roi_btn)
 
+        # Polygon ROI
+        self.add_poly_roi_btn = QPushButton("Add Polygon ROI")
+        self.add_poly_roi_btn.setToolTip("Custom polygon ROI")
+        self.add_poly_roi_btn.clicked.connect(self.add_polygon_roi)
+        self.add_poly_roi_btn.setEnabled(False)
+        bottom.addWidget(self.add_poly_roi_btn)
+
         self.apply_crop_btn = QPushButton("Apply Crop")
-        self.apply_crop_btn.setToolTip("Apply the current ROI as a spatial crop to the entire stack")
         self.apply_crop_btn.setEnabled(False)
         self.apply_crop_btn.clicked.connect(self.apply_spatial_crop)
         bottom.addWidget(self.apply_crop_btn)
 
         self.remove_roi_btn = QPushButton("Remove ROI")
-        self.remove_roi_btn.setToolTip("Remove the current ROI overlay")
         self.remove_roi_btn.setEnabled(False)
         self.remove_roi_btn.clicked.connect(self.remove_crop_roi)
         bottom.addWidget(self.remove_roi_btn)
 
         self.undo_crop_btn = QPushButton("Undo Crop")
-        self.undo_crop_btn.setToolTip("Restore the dataset from before the last crop")
         self.undo_crop_btn.setEnabled(False)
         self.undo_crop_btn.clicked.connect(self.undo_spatial_crop)
         bottom.addWidget(self.undo_crop_btn)
 
-        # NEW: Set Circle by numbers
         self.set_circle_btn = QPushButton("Set Circle (cx, cy, d)")
-        self.set_circle_btn.setToolTip("Type center X/Y and diameter to place a precise circle ROI")
+        self.set_circle_btn.setToolTip("Type center X/Y and diameter")
         self.set_circle_btn.setEnabled(False)
         self.set_circle_btn.clicked.connect(self.set_circle_by_numbers)
         bottom.addWidget(self.set_circle_btn)
 
-        # Circle ROI info label (center & diameter)
         self.circle_info_label = QLabel("Circle ROI: —")
         bottom.addWidget(self.circle_info_label)
 
@@ -527,16 +522,14 @@ class IRViewerPG(QMainWindow):
             self.original_data = data
             self.loaded_data = data.copy()
 
-            # Clear any previous crop ROI
             self.remove_crop_roi()
             self.circle_info_label.setText("Circle ROI: —")
 
-            # Prompt for sampling frequency
             fs, ok = QInputDialog.getDouble(
                 self, "Sampling Frequency", "Enter sampling frequency [Hz]:", 50.0, 0.01, 1e6, 2
             )
             if not ok:
-                fs = 1.0  # Default to avoid divide-by-zero
+                fs = 1.0
 
             self.fs = float(fs)
             self.current_frame = 0
@@ -545,9 +538,9 @@ class IRViewerPG(QMainWindow):
             self._init_slider()
             self.undo_button.setEnabled(False)
 
-            # Enable crop placement + set-circle buttons now that we have data
             self.add_rect_roi_btn.setEnabled(True)
             self.add_circle_roi_btn.setEnabled(True)
+            self.add_poly_roi_btn.setEnabled(True)
             self.set_circle_btn.setEnabled(True)
 
         except Exception as e:
@@ -576,10 +569,8 @@ class IRViewerPG(QMainWindow):
         if not (start <= self.current_frame <= end):
             self.current_frame = start
 
-        if self.use_time_axis and self.fs:
-            xvals = np.arange(self.loaded_data.shape[0]) / self.fs
-        else:
-            xvals = np.arange(self.loaded_data.shape[0])
+        xvals = np.arange(self.loaded_data.shape[0]) / self.fs if (self.use_time_axis and self.fs) \
+            else np.arange(self.loaded_data.shape[0])
 
         self.image_view.setImage(self.loaded_data, xvals=xvals, autoLevels=False)
         self.image_view.setCurrentIndex(self.current_frame)
@@ -592,7 +583,7 @@ class IRViewerPG(QMainWindow):
         start, end = self.trim_slider.value()
         if start > end:
             start, end = end, start
-        self.loaded_data = self.loaded_data[start : end + 1]
+        self.loaded_data = self.loaded_data[start: end + 1]
         self.current_frame = 0
         self._init_slider()
         self.update_viewer()
@@ -610,9 +601,7 @@ class IRViewerPG(QMainWindow):
     def update_viewer(self) -> None:
         if self.loaded_data is None:
             return
-        self.image_view.setImage(
-            self.loaded_data, xvals=np.arange(self.loaded_data.shape[0]), autoLevels=True
-        )
+        self.image_view.setImage(self.loaded_data, xvals=np.arange(self.loaded_data.shape[0]), autoLevels=True)
         self.image_view.setCurrentIndex(self.current_frame)
         self.frame_label.setText(f"Frame: {self.current_frame} / {self.loaded_data.shape[0] - 1}")
 
@@ -653,27 +642,21 @@ class IRViewerPG(QMainWindow):
         n_frames, h, w = data.shape
         n_freqs = n_frames // 2 + 1
 
-        # Progress dialog over image rows (same UX)
         progress = QProgressDialog("Computing FFT...", "Cancel", 0, h, self)
         progress.setWindowModality(Qt.ApplicationModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
-        progress.show()  # ensure dialog is visible
+        progress.show()
         QApplication.processEvents()
 
-        # Preallocate arrays
         fft_data = np.empty((n_freqs, h, w), dtype=np.complex64)
-
-        # Mean removal across time axis
         time_series = data - data.mean(axis=0)
 
-        # Compute FFT for each pixel along time (preserved algorithm)
         for i in range(h):
             for j in range(w):
                 signal = time_series[:, i, j]
                 fft_result = np.fft.rfft(signal)
                 fft_data[:, i, j] = fft_result
-
             progress.setValue(i + 1)
             QApplication.processEvents()
             if progress.wasCanceled():
@@ -681,7 +664,7 @@ class IRViewerPG(QMainWindow):
                 return
 
         fft_freqs = np.fft.rfftfreq(n_frames, d=1 / fs)
-        fft_mag = np.abs(fft_data) * (2 / n_frames)  # scale by number of frames
+        fft_mag = np.abs(fft_data) * (2 / n_frames)
         fft_phase = np.angle(fft_data)
 
         def spectrum_callback(mean_signal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -691,7 +674,6 @@ class IRViewerPG(QMainWindow):
         progress.setValue(h)
         progress.close()
 
-        # enable_save_mag=True -> show "Save FFT Magnitude (.npy)" button
         self._show_frequency_analysis_viewer(
             data, fft_freqs, fft_mag, fft_phase, spectrum_callback, enable_save_mag=True
         )
@@ -710,7 +692,6 @@ class IRViewerPG(QMainWindow):
         dlg.resize(self.size())
         vbox = QVBoxLayout(dlg)
 
-        # Top row viewers
         top = QHBoxLayout()
         vbox.addLayout(top)
 
@@ -731,7 +712,6 @@ class IRViewerPG(QMainWindow):
         ph_view.ui.roiBtn.hide()
         top.addWidget(ph_view)
 
-        # Spectrum plot
         spectrum_plot = pg.PlotWidget()
         spectrum_plot.setLabel("bottom", "Frequency [Hz]")
         spectrum_plot.setLabel("left", "Amplitude")
@@ -744,13 +724,11 @@ class IRViewerPG(QMainWindow):
         roi = pg.RectROI([30, 30], [40, 40], pen=pg.mkPen("r", width=2))
         raw_view.addItem(roi)
 
-        # Preferred minimum sizes
         raw_view.setMinimumSize(400, 400)
         mag_view.setMinimumSize(400, 400)
         ph_view.setMinimumSize(400, 400)
         spectrum_plot.setMinimumHeight(150)
 
-        # Save button row (optional for FFT)
         if enable_save_mag:
             save_row = QHBoxLayout()
             vbox.addLayout(save_row)
@@ -772,8 +750,6 @@ class IRViewerPG(QMainWindow):
 
             save_btn.clicked.connect(_save_mag)
 
-        # -- update helpers
-
         def update_fft_images_from_cursor() -> None:
             freq_pos = cursor_line.value()
             idx = np.abs(freq_vector - freq_pos).argmin()
@@ -787,30 +763,20 @@ class IRViewerPG(QMainWindow):
             try:
                 h_, w_ = roi.size()
                 pos = roi.pos()
-
-                # NOTE: pos returns (x, y); maintain original mapping
                 y0, x0 = math.floor(pos[0]), math.floor(pos[1])
                 y1, x1 = math.ceil(pos[0] + w_), math.ceil(pos[1] + h_)
-
-                # Clamp coordinates
-                x0 = max(0, x0)
-                y0 = max(0, y0)
-                x1 = min(original_data.shape[2], x1)
-                y1 = min(original_data.shape[1], y1)
-
+                x0 = max(0, x0); y0 = max(0, y0)
+                x1 = min(original_data.shape[2], x1); y1 = min(original_data.shape[1], y1)
                 if x1 <= x0 or y1 <= y0:
                     print("ROI outside bounds or zero area.")
                     return
-
                 roi_data = original_data[:, y0:y1, x0:x1]
                 mean_signal = roi_data.mean(axis=(1, 2))
                 freqs, spectrum = spectrum_callback(mean_signal)
                 spectrum_curve.setData(freqs, spectrum)
-
                 if self.current_fft_index < len(freqs):
                     cursor_line.setPos(freqs[self.current_fft_index])
                 update_fft_images_from_cursor()
-
             except Exception as e:
                 print("Spectrum update failed:", e)
 
@@ -832,18 +798,13 @@ class IRViewerPG(QMainWindow):
         n_frames, h, w = data.shape
         N = n_frames
 
-        # Frequency sweep vector (unchanged)
-        freq_vector = np.linspace(0, fs / 2, 200)  # 200 points up to Nyquist
+        freq_vector = np.linspace(0, fs / 2, 200)
         n_freqs = len(freq_vector)
-
-        # Time vector
         t = np.arange(N) / fs
 
-        # Preallocate
         mag_data = np.empty((n_freqs, h, w), dtype=np.float32)
         phase_data = np.empty((n_freqs, h, w), dtype=np.float32)
 
-        # Progress dialog
         progress = QProgressDialog("Computing Lock-in Correlation...", "Cancel", 0, n_freqs, self)
         progress.setWindowModality(Qt.ApplicationModal)
         progress.setMinimumDuration(0)
@@ -851,18 +812,15 @@ class IRViewerPG(QMainWindow):
         progress.show()
         QApplication.processEvents()
 
-        # Loop over frequencies (preserved algorithm)
         for k, fl in enumerate(freq_vector):
             sine = np.sin(2 * np.pi * fl * t)
             cosine = np.cos(2 * np.pi * fl * t)
             sine_3d = sine[:, None, None]
             cosine_3d = cosine[:, None, None]
-
             X = (2 / N) * np.sum(data * cosine_3d, axis=0)
             Y = (2 / N) * np.sum(data * sine_3d, axis=0)
-            mag_data[k] = np.sqrt(X ** 2 + Y ** 2)
+            mag_data[k] = np.sqrt(X**2 + Y**2)
             phase_data[k] = np.degrees(np.arctan2(Y, X))
-
             progress.setValue(k + 1)
             QApplication.processEvents()
             if progress.wasCanceled():
@@ -871,7 +829,6 @@ class IRViewerPG(QMainWindow):
 
         progress.close()
 
-        # ROI callback for spectrum
         def spectrum_callback(mean_signal: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
             spectrum_list = []
             for fl in freq_vector:
@@ -879,7 +836,7 @@ class IRViewerPG(QMainWindow):
                 cosine = np.cos(2 * np.pi * fl * t)
                 X_roi = (2 / N) * np.sum(mean_signal * cosine)
                 Y_roi = (2 / N) * np.sum(mean_signal * sine)
-                spectrum_list.append(np.sqrt(X_roi ** 2 + Y_roi ** 2))
+                spectrum_list.append(np.sqrt(X_roi**2 + Y_roi**2))
             return freq_vector, np.array(spectrum_list)
 
         self._show_frequency_analysis_viewer(
@@ -892,7 +849,6 @@ class IRViewerPG(QMainWindow):
         dlg.resize(self.size())
         layout = QVBoxLayout(dlg)
 
-        # Top row: video viewer
         top = QHBoxLayout()
         layout.addLayout(top)
 
@@ -902,17 +858,14 @@ class IRViewerPG(QMainWindow):
         raw_view.ui.roiBtn.hide()
         top.addWidget(raw_view)
 
-        # Bottom: time-series plot
         time_plot = pg.PlotWidget()
         time_plot.setLabel("bottom", "Time [s]")
         time_plot.setLabel("left", "Intensity")
         layout.addWidget(time_plot)
 
-        # Storage for ROIs and their plots
         roi_list: list[pg.ROI] = []
         curves: list[pg.PlotDataItem] = []
 
-        # Controls: toggles for processing
         ctrl_layout = QHBoxLayout()
         layout.addLayout(ctrl_layout)
 
@@ -930,13 +883,10 @@ class IRViewerPG(QMainWindow):
         t = np.arange(data.shape[0]) / fs
 
         def process_signal(sig: np.ndarray) -> np.ndarray:
-            """Apply processing options to signal (detrend, bandpass, smooth)."""
             out = sig.copy()
             if detrend_cb.isChecked():
-                # Linear detrend via 1st-order poly fit
                 out = out - np.polyval(np.polyfit(t, out, 1), t)
             if filter_cb.isChecked():
-                # Note: normalized Wn values as in original; keep behavior
                 from scipy.signal import butter, filtfilt
                 b, a = butter(3, [0.1, 0.3], btype="band")
                 out = filtfilt(b, a, out)
@@ -952,15 +902,10 @@ class IRViewerPG(QMainWindow):
                 x0, y0 = int(pos[0]), int(pos[1])
                 w_, h_ = int(size[0]), int(size[1])
                 x1, y1 = x0 + w_, y0 + h_
-
-                # Clamp to bounds
-                x0 = max(0, x0)
-                y0 = max(0, y0)
-                x1 = min(data.shape[2], x1)
-                y1 = min(data.shape[1], y1)
+                x0 = max(0, x0); y0 = max(0, y0)
+                x1 = min(data.shape[2], x1); y1 = min(data.shape[1], y1)
                 if x1 <= x0 or y1 <= y0:
                     continue
-
                 roi_data = data[:, y0:y1, x0:x1]
                 mean_signal = roi_data.mean(axis=(1, 2))
                 curve.setData(t, process_signal(mean_signal))
@@ -975,15 +920,12 @@ class IRViewerPG(QMainWindow):
             roi.sigRegionChanged.connect(update_all_traces)
             update_all_traces()
 
-        # Start with one ROI
         add_roi()
 
-        # Ctrl-click on video to add ROIs (unchanged UX)
         raw_view.scene.sigMouseClicked.connect(
             lambda ev: add_roi() if ev.modifiers() & Qt.ControlModifier else None
         )
 
-        # Update when toggles are clicked
         detrend_cb.clicked.connect(update_all_traces)
         filter_cb.clicked.connect(update_all_traces)
         smooth_cb.clicked.connect(update_all_traces)
@@ -993,14 +935,12 @@ class IRViewerPG(QMainWindow):
     # ---- Crop helpers -------------------------------------------------
 
     def _get_image_item(self):
-        """Get the underlying ImageItem from ImageView."""
         img_item = getattr(self.image_view, "imageItem", None)
         if img_item is None and hasattr(self.image_view, "getImageItem"):
             img_item = self.image_view.getImageItem()
         return img_item
 
     def _ensure_no_existing_roi(self) -> None:
-        """Remove any existing crop ROI from the view."""
         if self.crop_roi is not None:
             try:
                 self.image_view.removeItem(self.crop_roi)
@@ -1009,9 +949,10 @@ class IRViewerPG(QMainWindow):
             self.crop_roi = None
         self.apply_crop_btn.setEnabled(False)
         self.remove_roi_btn.setEnabled(False)
+        self._last_crop_was_ellipse = False
+        self._last_crop_was_polygon = False
 
     def add_rect_roi(self) -> None:
-        """Add a rectangular ROI to the image view."""
         if self.loaded_data is None:
             print("No video loaded.")
             return
@@ -1023,12 +964,10 @@ class IRViewerPG(QMainWindow):
         y = int((H - h) / 2)
         self.crop_roi = pg.RectROI([x, y], [w, h], pen=pg.mkPen('y', width=2))
         self.image_view.addItem(self.crop_roi)
-        self._last_crop_was_ellipse = False
         self.apply_crop_btn.setEnabled(True)
         self.remove_roi_btn.setEnabled(True)
 
     def add_circle_roi(self) -> None:
-        """Add a circular ROI and enforce 1:1 aspect during any resize/move."""
         if self.loaded_data is None:
             print("No video loaded.")
             return
@@ -1039,28 +978,39 @@ class IRViewerPG(QMainWindow):
         y = int((H - d) / 2)
         self.crop_roi = pg.EllipseROI([x, y], [d, d], pen=pg.mkPen('c', width=2))
         self.image_view.addItem(self.crop_roi)
-        # Force perfect circle as user interacts
         self.crop_roi.sigRegionChanged.connect(self._enforce_circular_roi)
-        self._enforce_circular_roi()  # ensure initial 1:1
+        self._enforce_circular_roi()
         self._last_crop_was_ellipse = True
         self.apply_crop_btn.setEnabled(True)
         self.remove_roi_btn.setEnabled(True)
-        # Update label initially
         self._update_circle_info_label()
 
+    def add_polygon_roi(self) -> None:
+        if self.loaded_data is None:
+            print("No video loaded.")
+            return
+        self._ensure_no_existing_roi()
+        _, H, W = self.loaded_data.shape
+        cx, cy = W / 2.0, H / 2.0
+        r = max(20, min(W, H) * 0.2)
+        pts = [[cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy]]
+        self.crop_roi = pg.PolyLineROI(pts, closed=True, pen=pg.mkPen('m', width=2))
+        self.image_view.addItem(self.crop_roi)
+        self._last_crop_was_polygon = True
+        self.apply_crop_btn.setEnabled(True)
+        self.remove_roi_btn.setEnabled(True)
+
     def _enforce_circular_roi(self) -> None:
-        """Keep the EllipseROI strictly circular (1:1), preserving its center."""
         if self.crop_roi is None or self._circle_update_lock:
             return
         try:
             self._circle_update_lock = True
-            pos = self.crop_roi.pos()    # (x, y)
-            size = self.crop_roi.size()  # (w, h)
-            w = float(size[0])
-            h = float(size[1])
+            pos = self.crop_roi.pos()
+            size = self.crop_roi.size()
+            w = float(size[0]); h = float(size[1])
             if w <= 0 or h <= 0:
                 return
-            s = min(w, h)  # target side
+            s = min(w, h)
             cx = float(pos[0]) + w / 2.0
             cy = float(pos[1]) + h / 2.0
             new_pos = [cx - s / 2.0, cy - s / 2.0]
@@ -1068,11 +1018,9 @@ class IRViewerPG(QMainWindow):
             self.crop_roi.setSize([s, s], finish=False)
         finally:
             self._circle_update_lock = False
-        # Update readout after enforcing circle
         self._update_circle_info_label()
 
     def _update_circle_info_label(self) -> None:
-        """Show circle center (x,y) and diameter (px) in data coordinates."""
         if self.crop_roi is None or not self._last_crop_was_ellipse:
             self.circle_info_label.setText("Circle ROI: —")
             return
@@ -1089,13 +1037,11 @@ class IRViewerPG(QMainWindow):
         )
 
     def set_circle_by_numbers(self) -> None:
-        """Open a dialog to type center and diameter, then place a circle ROI."""
         if self.loaded_data is None:
             print("No video loaded.")
             return
         _, H, W = self.loaded_data.shape
 
-        # Prefill with current circle if available; else image center & half min dimension
         if self.crop_roi is not None and self._last_crop_was_ellipse:
             bounds = self._roi_bounds_clamped()
             if bounds is not None:
@@ -1113,16 +1059,13 @@ class IRViewerPG(QMainWindow):
             return
         cx, cy, d = dlg.values()
 
-        # Clamp so the ROI stays inside the image
         d = max(1, min(d, min(W, H)))
         half = d / 2.0
         x0 = int(round(cx - half))
         y0 = int(round(cy - half))
-        # Adjust to keep inside bounds
         x0 = max(0, min(x0, W - d))
         y0 = max(0, min(y0, H - d))
 
-        # Create or reuse the EllipseROI at the specified position/size
         if self.crop_roi is None or not self._last_crop_was_ellipse:
             self._ensure_no_existing_roi()
             self.crop_roi = pg.EllipseROI([x0, y0], [d, d], pen=pg.mkPen('c', width=2))
@@ -1139,21 +1082,14 @@ class IRViewerPG(QMainWindow):
         self._update_circle_info_label()
 
     def remove_crop_roi(self) -> None:
-        """Remove only the ROI overlay (no data changes)."""
         self._ensure_no_existing_roi()
         self.circle_info_label.setText("Circle ROI: —")
 
     def _roi_bounds_clamped(self) -> Optional[tuple[int, int, int, int]]:
-        """
-        Return (x0, y0, x1, y1) integer bounds of current ROI in array coordinates,
-        using ROI.getArraySlice for accurate mapping (accounts for transforms).
-        """
         if self.loaded_data is None or self.crop_roi is None:
             return None
 
-        # Current 2D frame (t, y, x) -> (y, x)
         img2d = self.loaded_data[self.current_frame]
-
         img_item = self._get_image_item()
         if img_item is None:
             print("Internal error: ImageItem not found.")
@@ -1162,94 +1098,151 @@ class IRViewerPG(QMainWindow):
         try:
             slices, _ = self.crop_roi.getArraySlice(img2d, img_item)  # (slice_y, slice_x)
             sy, sx = slices
-
             y0 = 0 if sy.start is None else int(sy.start)
             y1 = img2d.shape[0] if sy.stop is None else int(sy.stop)
             x0 = 0 if sx.start is None else int(sx.start)
             x1 = img2d.shape[1] if sx.stop is None else int(sx.stop)
-
-            # Clamp
-            y0 = max(0, min(y0, img2d.shape[0]))
-            y1 = max(0, min(y1, img2d.shape[0]))
-            x0 = max(0, min(x0, img2d.shape[1]))
-            x1 = max(0, min(x1, img2d.shape[1]))
-
+            y0 = max(0, min(y0, img2d.shape[0])); y1 = max(0, min(y1, img2d.shape[0]))
+            x0 = max(0, min(x0, img2d.shape[1])); x1 = max(0, min(x1, img2d.shape[1]))
             if x1 <= x0 or y1 <= y0:
                 return None
-
             return x0, y0, x1, y1
         except Exception as e:
             print(f"Failed to compute ROI slice: {e}")
             return None
 
+    # --- Polygon vertices in image coordinates (robust: scene -> imageItem)
+    def _polygon_vertices_image_coords(self) -> Optional[List[Tuple[float, float]]]:
+        """
+        Return polygon vertices in *image array* coordinates for PolyLineROI.
+        Map ROI-local handle positions -> scene -> imageItem coords for robust alignment.
+        """
+        if self.crop_roi is None or not isinstance(self.crop_roi, pg.PolyLineROI):
+            return None
+
+        img_item = self._get_image_item()
+        if img_item is None:
+            print("Internal error: ImageItem not found.")
+            return None
+
+        verts: List[Tuple[float, float]] = []
+        try:
+            for h in self.crop_roi.getHandles():
+                handle_item = h.get("item", None)
+                if handle_item is not None:
+                    p_local = handle_item.pos()  # QPointF (ROI-local)
+                else:
+                    p_local = h.get("pos", None)
+                    if p_local is None:
+                        continue
+                # ROI-local -> scene -> image coords
+                p_scene = self.crop_roi.mapToScene(p_local)
+                p_img = img_item.mapFromScene(p_scene)
+                verts.append((float(p_img.x()), float(p_img.y())))
+            if len(verts) < 3:
+                return None
+            return verts
+        except Exception as e:
+            print(f"Cannot extract polygon vertices (image coords): {e}")
+            return None
+
+    # --- Polygon mask rasterization via vectorized ray-casting (robust, no Qt)
+    def _rasterize_polygon_mask(self, verts_xy: List[Tuple[float, float]], x0: int, y0: int, w: int, h: int) -> np.ndarray:
+        """
+        Rasterize a polygon (verts in image coords) into a (h, w) uint8 mask
+        using a vectorized ray-casting algorithm (inside=True -> 255).
+        """
+        if w <= 0 or h <= 0 or len(verts_xy) < 3:
+            return np.zeros((h, w), dtype=np.uint8)
+
+        xv = np.asarray([vx - x0 for (vx, _vy) in verts_xy], dtype=np.float64)
+        yv = np.asarray([vy - y0 for (_vx, vy) in verts_xy], dtype=np.float64)
+
+        yy, xx = np.meshgrid(np.arange(h, dtype=np.float64), np.arange(w, dtype=np.float64), indexing='ij')
+
+        x1 = xv
+        y1 = yv
+        x2 = np.roll(xv, -1)
+        y2 = np.roll(yv, -1)
+
+        cond = ((y1[:, None, None] <= yy) & (y2[:, None, None] > yy)) | \
+               ((y2[:, None, None] <= yy) & (y1[:, None, None] > yy))
+        xints = (x2 - x1)[:, None, None] * (yy - y1[:, None, None]) / ((y2 - y1)[:, None, None] + 1e-12) + x1[:, None, None]
+
+        crossings = cond & (xx < xints)
+        inside = np.count_nonzero(crossings, axis=0) % 2 == 1
+
+        return (inside.astype(np.uint8) * 255)
+
     def apply_spatial_crop(self) -> None:
         """
         Apply the current ROI to crop the stack (t, y, x) using precise bounds
         from ROI.getArraySlice. Rect ROI -> rectangular crop.
-        Circle ROI -> rectangular crop + zero outside the circle (keeps analyses intact).
+        Circle ROI -> rectangular crop + zero outside the circle.
+        Polygon ROI -> rectangular crop + zero outside the polygon.
         """
         if self.loaded_data is None or self.crop_roi is None:
             print("No ROI to apply.")
             return
-
         bounds = self._roi_bounds_clamped()
         if bounds is None:
             print("ROI out of bounds or zero area.")
             return
-
         x0, y0, x1, y1 = bounds
 
-        # Save current histogram levels so display doesn't "binarize" after masking
         hw = self.image_view.getHistogramWidget() if hasattr(self.image_view, "getHistogramWidget") \
             else self.image_view.ui.histogram
         prev_levels = hw.getLevels()
 
-        # Backups for Undo Crop
         self._backup_loaded_data = self.loaded_data
         self._backup_original_data = self.original_data
 
-        # Crop current and original datasets (t, y, x)
         cropped_loaded = self.loaded_data[:, y0:y1, x0:x1]
         cropped_original = None if self.original_data is None else self.original_data[:, y0:y1, x0:x1]
 
+        # Circle mask
         if self._last_crop_was_ellipse:
-            # Build a circular mask in the cropped rectangle, centered in the box
-            h = y1 - y0
-            w = x1 - x0
+            h = y1 - y0; w = x1 - x0
             r = min(h, w) / 2.0
-            cy = (h - 1) / 2.0
-            cx = (w - 1) / 2.0
+            cy = (h - 1) / 2.0; cx = (w - 1) / 2.0
             yy, xx = np.ogrid[:h, :w]
             circle = ((yy - cy) ** 2 + (xx - cx) ** 2) <= (r ** 2)
-
-            # Apply mask as zeros outside the circle (preserve dtype)
             mask_loaded = circle.astype(cropped_loaded.dtype, copy=False)[None, :, :]
             cropped_loaded = cropped_loaded * mask_loaded
-
             if cropped_original is not None:
                 mask_original = circle.astype(cropped_original.dtype, copy=False)[None, :, :]
                 cropped_original = cropped_original * mask_original
 
-        # Commit
+        # Polygon mask (always honor actual PolyLineROI)
+        if isinstance(self.crop_roi, pg.PolyLineROI):
+            verts = self._polygon_vertices_image_coords()
+            if verts is not None:
+                h = y1 - y0; w = x1 - x0
+                mask_u8 = self._rasterize_polygon_mask(verts, x0, y0, w, h)  # 0/255
+                mask_bool = mask_u8 > 0
+                mask_loaded = mask_bool.astype(cropped_loaded.dtype, copy=False)[None, :, :]
+                cropped_loaded = cropped_loaded * mask_loaded
+                if cropped_original is not None:
+                    mask_original = mask_bool.astype(cropped_original.dtype, copy=False)[None, :, :]
+                    cropped_original = cropped_original * mask_original
+            else:
+                print("Polygon vertices not found; rectangular crop applied.")
+
         self.loaded_data = cropped_loaded
         if cropped_original is not None:
             self.original_data = cropped_original
 
-        # Clean up ROI and refresh UI
         self._ensure_no_existing_roi()
         self.current_frame = 0
         self._init_slider()
         self.update_viewer()
 
-        # Restore histogram levels so zeros outside circle don't skew contrast
         hw.setLevels(*prev_levels)
 
-        # Enable Undo Crop
         self.undo_crop_btn.setEnabled(True)
         print(f"Cropped to x:[{x0},{x1}), y:[{y0},{y1}) ; shape -> {self.loaded_data.shape}")
 
     def undo_spatial_crop(self) -> None:
-        """Restore dataset to state before last crop."""
         if self._backup_loaded_data is None:
             print("No crop to undo.")
             return
@@ -1271,7 +1264,6 @@ class IRViewerPG(QMainWindow):
 def show_splash_then_main() -> None:
     app = QApplication(sys.argv)
 
-    # Look for an icon next to this file
     logo = Path(__file__).parent / "icon.png"
     splash: Optional[QSplashScreen] = None
     if logo.exists():
