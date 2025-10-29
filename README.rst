@@ -12,24 +12,24 @@ Whether you're exploring temperature distributions, performing thermographic ins
 Features
 --------
 
--  **Flexible input support**: image stacks, video files, NumPy arrays, CSV
+-  **Flexible input support**: image stacks, video files, NumPy arrays, CSV, but also .sfmov and .hcc data directly from FLIR and Telops cameras 
 -  **Temperature tools**: emissivity correction, radiometric-to-temperature conversion
--  **Time-domain analysis**: Thermography, temperature accumulation analysis
--  **Frequency-domain analysis**: Thermoelastic Stress Analysis
+-  **Time-domain analysis**: Classic thermography and temperature accumulation analysis
+-  **Frequency-domain analysis**: Thermoelastic Stress Analysis via FFT and lock-in correlation analysis 
 -  **Visualization**: ROI monitoring, line profiles, area averages, video animation
--  **Utility tools**: windowing, unit conversion, SNR calculation, resampling, image processing
+-  **Utility tools**: windowing, unit conversion, SNR calculation, resampling, basic image processing
 -  **Modular design**: clean architecture to support GUI/CLI integration and future analysis modules
 
 Installation
 ------------
 
-Install via pip:
+Install via pip **will be soon available** on PyPI as:
 
 .. code-block:: bash
 
     pip install infrapy
 
-Or install from source:
+In the meantime, install it from source:
 
 .. code-block:: bash
 
@@ -41,12 +41,12 @@ Planned Extensions
 ------------------
 
 - Thermal anomaly detection tools
-- GUI frontend for interactive workflows
+- Improved GUI for interactive analysis
 
 Getting Started
 ---------------
 
-Coming soon: example notebooks in the ``examples/`` folder for:
+**Coming soon**: example notebooks in the ``examples/`` folder for:
 
 - Loading and displaying IR image sequences
 - Performing lock-in thermoelastic analysis
