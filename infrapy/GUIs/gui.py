@@ -50,7 +50,11 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+
+# ----------------------------------------------
 # High-DPI configuration (as early as possible)
+# ----------------------------------------------
+
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling)
 QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps)
 
@@ -64,7 +68,7 @@ from infrapy.thermoelasticity import lock_in_analysis  # noqa: F401  (kept as in
 import pyqtgraph as pg
 
 
-# -------------------------
+# ---------------------------
 # Small utilities / constants
 # -------------------------
 
@@ -913,25 +917,53 @@ class IRViewerPG(QMainWindow):
         if enable_save_mag:
             save_row = QHBoxLayout()
             vbox.addLayout(save_row)
-            save_btn = QPushButton("Save FFT Magnitude (.npy)")
-            save_btn.setToolTip("Save the full FFT magnitude array (n_freqs × H × W) to .npy")
+
+            save_btn = QPushButton("Save Mag/Phase as separate .npy")
+            save_btn.setToolTip(
+                "Choose a base name once; saves ..._mag.npy, ..._phase.npy"
+            )
             save_row.addWidget(save_btn)
             save_row.addStretch(1)
 
-            def _save_mag():
+            def _save_many():
+                # 1) Ask for a base filename once
+                #    We propose 'fft' so you'll get fft_mag.npy, fft_phase.npy
                 path, _ = QFileDialog.getSaveFileName(
-                    dlg, "Save FFT Magnitude", "fft_magnitude.npy", "NumPy binary (*.npy)"
+                    dlg,
+                    "Save FFT outputs (base name)",
+                    "fft.npy",                 # default suggestion; we will replace suffix
+                    "NumPy binary (*.npy)"
                 )
-                if path:
-                    try:
-                        np.save(path, mag_data)
-                        print(f"Saved FFT magnitude to: {path}")
-                    except Exception as e:
-                        print(f"Failed to save FFT magnitude: {e}")
+                if not path:
+                    return
 
-            save_btn.clicked.connect(_save_mag)
+                # Normalize: strip .npy if the user typed it
+                from pathlib import Path
+                base = Path(path)
+                if base.suffix.lower() == ".npy":
+                    base = base.with_suffix("")  # remove .npy
 
-        # -- update helpers
+                # 2) Build filenames
+                mag_path   = base.with_name(base.name + "_mag.npy")
+                phase_path = base.with_name(base.name + "_phase.npy")
+
+                try:
+                    # 3) Save magnitude & phase as separate files
+                    np.save(str(mag_path), mag_data)           # (n_freqs, H, W) float32
+                    np.save(str(phase_path), phase_data)       # (n_freqs, H, W) float32 (degrees)
+                    print(f"Saved: {mag_path}")
+                    print(f"Saved: {phase_path}")
+
+                    # Optionally also save freqs as its own .npy for convenience:
+                    freqs_path = base.with_name(base.name + "_freqs.npy")
+                    np.save(str(freqs_path), freq_vector)
+                    print(f"Saved: {freqs_path}")
+
+                except Exception as e:
+                    print(f"Failed to save FFT outputs: {e}")
+
+            save_btn.clicked.connect(_save_many)
+                # -- update helpers
 
         def update_fft_images_from_cursor() -> None:
             freq_pos = cursor_line.value()
