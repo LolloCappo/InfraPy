@@ -949,8 +949,8 @@ class IRViewerPG(QMainWindow):
 
                 try:
                     # 3) Save magnitude & phase as separate files
-                    np.save(str(mag_path), mag_data)           # (n_freqs, H, W) float32
-                    np.save(str(phase_path), phase_data)       # (n_freqs, H, W) float32 (degrees)
+                    np.save(str(mag_path), mag_data.T)           # (n_freqs, H, W) float32
+                    np.save(str(phase_path), phase_data.T)       # (n_freqs, H, W) float32 (degrees)
                     print(f"Saved: {mag_path}")
                     print(f"Saved: {phase_path}")
 
@@ -1455,7 +1455,6 @@ class IRViewerPG(QMainWindow):
         self.update_viewer()
         self.undo_crop_btn.setEnabled(False)
         print("Crop undone.")
-
 
 # -------------------------
 # App bootstrap with splash
