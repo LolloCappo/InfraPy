@@ -94,7 +94,7 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
 
         # Extract magnitude and phase
         magnitude = 2 * np.abs(fft_val) / N
-        phase = np.degrees(np.unwrap(np.angle(fft_val)))
+        phase = np.degrees(np.angle(fft_val))
         
     else:
         raise ValueError("Method must be 'correlation', 'fft', or 'lsf'")
