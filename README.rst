@@ -6,7 +6,7 @@
 A Python Toolkit for Infrared Image Processing and Analysis
 ===========================================================
 
-**InfraPy** is a modular and extensible Python library for infrared image analysis. It offers a clean architecture for processing, analyzing, and visualizing infrared data, making it ideal for research, engineering, and diagnostic applications.
+**InfraPy** is a modular and extensible Python library for infrared imaging. It offers a clean architecture for processing, analyzing, and visualizing infrared data, making it ideal for research, engineering, and diagnostic applications.
 Whether you're exploring temperature distributions, performing thermographic inspections, or conducting advanced techniques like Thermoelastic Stress Analysis (TSA), InfraPy provides the tools and flexibility to streamline your infrared imaging workflows.
 
 Features
