@@ -14,7 +14,6 @@ Features
 
 -  **Flexible input support**: image stacks, video files, NumPy arrays, CSV, but also .sfmov and .hcc data directly from FLIR and Telops cameras 
 -  **Temperature tools**: emissivity correction, radiometric-to-temperature conversion
--  **Time-domain analysis**: Classic thermography and temperature accumulation analysis
 -  **Frequency-domain analysis**: Thermoelastic Stress Analysis via FFT and lock-in correlation analysis 
 -  **Visualization**: ROI monitoring, line profiles, area averages, video animation
 -  **Utility tools**: windowing, unit conversion, SNR calculation, resampling, basic image processing
@@ -40,8 +39,8 @@ In the meantime, install it from source:
 Planned Extensions
 ------------------
 
-- Thermal anomaly detection tools
-- Improved GUI for interactive analysis
+- **Time-domain analysis**: Classic thermography and temperature accumulation analysis
+- **Modular design**: Cleaner architecture to support GUI/CLI integration and future analysis modules
 
 Getting Started
 ---------------
@@ -52,6 +51,7 @@ Getting Started
 - Performing lock-in thermoelastic analysis
 - Monitoring temperature in selected ROIs
 - Filtering and normalizing noisy thermal data
+- Frequency-domain visualization of thermal responses
 
 Contributing
 ------------
