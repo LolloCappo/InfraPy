@@ -179,6 +179,11 @@ def load_ir_data(path):
     elif suffix == ".hcc":
         data, _ = read_ir(str(path))
         return ensure_3d(data)
+    
+    elif suffix == ".sfmov":
+        data, _ = read_ir(str(path))
+        return ensure_3d(data)
+
 
     elif suffix in [".npy", ".npz"]:
         data = np.load(path)
