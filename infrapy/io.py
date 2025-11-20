@@ -2,14 +2,14 @@ from pathlib import Path
 import numpy as np
 import tifffile
 import sdypy.io.sfmov as sfmov
-
-
 import pandas as pd
 import numpy as np
 import pysfmov as sfmov
 import TelopsToolbox.utils.image_processing as ip
 from tqdm import tqdm
 from TelopsToolbox.hcc.readIRCam import read_ircam
+import numpy as np
+
 
 def read_ir(filenames, skip_frames=1, return_timestamps=False):
     """
@@ -84,120 +84,6 @@ def read_ir(filenames, skip_frames=1, return_timestamps=False):
     # If no valid files were processed, raise an error
     raise ValueError("No valid `.hcc` or `.sfmov` files were found.")
 
-
-def load_ir_data(path):
-    """
-    Load infrared data from supported formats:
-    - Single or multi-frame TIFF, CSV, SFMOV, NPY, NPZ, HCC
-    - Folder of TIFF, CSV, SFMOV, or HCC files (each treated as 1 frame or multi-frame)
-
-    Parameters
-    ----------
-    path : str or Path
-        Path to the file or directory containing infrared data.
-
-    Returns
-    ----------
-    ndarray: 3D array with shape (num_frames, height, width)
-    """
-    path = Path(path)
-
-    def ensure_3d(arr):
-        arr = arr.astype(np.float32)
-        if arr.ndim == 2:
-            return arr[np.newaxis, ...]
-        elif arr.ndim == 3:
-            if arr.shape[-1] in [3, 4]:
-                arr_gray = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
-                return arr_gray[np.newaxis, ...]
-            else:
-                return arr
-        elif arr.ndim == 4:
-            if arr.shape[-1] in [3, 4]:
-                arr_gray = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
-                return arr_gray
-            else:
-                raise ValueError(f"Unsupported array shape: {arr.shape}")
-        else:
-            raise ValueError(f"Unsupported array shape: {arr.shape}")
-
-    if path.is_dir():
-        files = sorted(
-            f for f in path.iterdir()
-            if f.suffix.lower() in [".tif", ".tiff", ".csv", ".sfmov", ".hcc"]
-        )
-        if not files:
-            raise FileNotFoundError(f"No supported files found in folder: {path}")
-
-        frames = []
-        hcc_files = [str(f) for f in files if f.suffix.lower() == ".hcc"]
-        other_files = [f for f in files if f.suffix.lower() != ".hcc"]
-
-        # Process non-HCC files
-        for f in other_files:
-            suffix = f.suffix.lower()
-            if suffix in [".tif", ".tiff"]:
-                img = tifffile.imread(f)
-                img = ensure_3d(img)
-                frames.extend(img)
-            elif suffix == ".csv":
-                arr = np.loadtxt(f, delimiter=',')
-                arr = ensure_3d(arr)
-                frames.append(arr[0])
-            elif suffix == ".sfmov":
-                arr = sfmov.get_data(f)
-                arr = ensure_3d(arr)
-                frames.extend(arr)
-
-        # Process HCC files
-        if hcc_files:
-            hcc_data, _ = read_ir(hcc_files)
-            hcc_data = ensure_3d(hcc_data)
-            frames.extend(hcc_data)
-
-        return np.stack(frames, axis=0)
-
-    # Single file
-    suffix = path.suffix.lower()
-
-    if suffix in [".tif", ".tiff"]:
-        arr = tifffile.imread(path)
-        return ensure_3d(arr)
-
-    elif suffix == ".csv":
-        arr = np.loadtxt(path, delimiter=',')
-        return ensure_3d(arr)
-
-    elif suffix == ".hcc":
-        # Load all .hcc files in the same folder
-        hcc_files = sorted(str(f) for f in path.parent.glob("*.hcc"))
-        if not hcc_files:
-            raise FileNotFoundError(f"No other .hcc files found in folder: {path.parent}")
-        data, _ = read_ir(hcc_files)
-        return ensure_3d(data)
-
-    elif suffix == ".hcc":
-        data, _ = read_ir(str(path))
-        return ensure_3d(data)
-    
-    elif suffix == ".sfmov":
-        data, _ = read_ir(str(path))
-        return ensure_3d(data)
-
-
-    elif suffix in [".npy", ".npz"]:
-        data = np.load(path)
-        if isinstance(data, np.lib.npyio.NpzFile):
-            for key in data:
-                arr = data[key]
-                return ensure_3d(arr)
-            raise ValueError("No arrays found in .npz file.")
-        else:
-            return ensure_3d(data)
-
-    else:
-        raise ValueError(f"Unsupported file type: {suffix}")
-
 def save_ir_data(array, filepath, key="data", overwrite=True):
     """
     Save a 2D or 3D NumPy array to disk in .npy or compressed .npz format.
@@ -247,3 +133,168 @@ def save_ir_data(array, filepath, key="data", overwrite=True):
         raise ValueError(f"Unsupported file format: {suffix}. Use .npy or .npz.")
 
     return filepath
+
+from pathlib import Path
+import numpy as np
+import tifffile
+
+# External dependencies assumed:
+# - sfmov.get_data(file)
+# - read_ir(files)
+
+from pathlib import Path
+import numpy as np
+import tifffile
+from tqdm import tqdm  # for progress bar
+
+# External dependencies assumed:
+# - sfmov.get_data(file)
+# - read_ir(files)
+
+def load_ir_data(path, sort_by="name", normalize=False, verbose=False):
+    """
+    Load infrared data from supported formats:
+    - Single or multi-frame TIFF, CSV, SFMOV, NPY, NPZ, HCC
+    - Folder of TIFF, CSV, SFMOV, or HCC files (each treated as 1 frame or multi-frame)
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the file or directory containing infrared data.
+    sort_by : str, optional
+        Sorting method for folder files: "name" or "mtime" (modification time).
+    normalize : bool, optional
+        If True, normalize frames to [0, 1].
+    verbose : bool, optional
+        If True, print progress and file names.
+
+    Returns
+    ----------
+    ndarray: 3D array with shape (num_frames, height, width)
+    """
+    path = Path(path)
+
+    def ensure_3d(arr):
+        arr = arr.astype(np.float32)
+        if arr.ndim == 2:  # Single grayscale frame
+            return arr[np.newaxis, ...]
+        elif arr.ndim == 3:
+            if arr.shape[-1] in [3, 4]:  # RGB or RGBA
+                arr_gray = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
+                return arr_gray[np.newaxis, ...]
+            else:  # Multi-frame grayscale
+                return arr
+        elif arr.ndim == 4:
+            if arr.shape[-1] in [3, 4]:  # Multi-frame RGB
+                arr_gray = np.dot(arr[..., :3], [0.2989, 0.5870, 0.1140])
+                return arr_gray
+            else:
+                raise ValueError(f"Unsupported array shape: {arr.shape}")
+        else:
+            raise ValueError(f"Unsupported array shape: {arr.shape}")
+
+    def sort_files(files):
+        if sort_by == "mtime":
+            return sorted(files, key=lambda f: f.stat().st_mtime)
+        return sorted(files, key=lambda f: f.name)
+
+    def normalize_frame(arr):
+        arr_min, arr_max = arr.min(), arr.max()
+        if arr_max > arr_min:
+            return (arr - arr_min) / (arr_max - arr_min)
+        return arr
+
+    frames = []
+
+    # If path is a directory
+    if path.is_dir():
+        files = [f for f in path.iterdir() if f.suffix.lower() in [".tif", ".tiff", ".csv", ".sfmov", ".hcc"]]
+        if not files:
+            raise FileNotFoundError(f"No supported files found in folder: {path}")
+        files = sort_files(files)
+
+        if verbose:
+            print(f"Found {len(files)} files in folder: {path}")
+
+        for f in tqdm(files, desc="Loading IR data"):
+            suffix = f.suffix.lower()
+            if verbose:
+                print(f"Processing: {f.name}")
+
+            if suffix in [".tif", ".tiff"]:
+                img = tifffile.imread(f)
+                img = ensure_3d(img)
+                frames.extend(img)
+            elif suffix == ".csv":
+                arr = np.loadtxt(f, delimiter=',')
+                arr = ensure_3d(arr)
+                frames.extend(arr)
+            elif suffix == ".sfmov":
+                arr = sfmov.get_data(f)
+                arr = ensure_3d(arr)
+                frames.extend(arr)
+            elif suffix == ".hcc":
+                # Collect HCC files for batch processing later
+                pass
+
+        # Process HCC files together
+        hcc_files = [str(f) for f in files if f.suffix.lower() == ".hcc"]
+        if hcc_files:
+            if verbose:
+                print(f"Processing {len(hcc_files)} HCC files...")
+            hcc_data, _ = read_ir(hcc_files)
+            hcc_data = ensure_3d(hcc_data)
+            frames.extend(hcc_data)
+
+    else:
+        # Single file case
+        suffix = path.suffix.lower()
+
+        if suffix in [".tif", ".tiff"]:
+            # Load all TIFFs in the same folder
+            tiff_files = sort_files(list(path.parent.glob("*.tif")) + list(path.parent.glob("*.tiff")))
+            if verbose:
+                print(f"Found {len(tiff_files)} TIFF files in folder: {path.parent}")
+            for f in tqdm(tiff_files, desc="Loading TIFFs"):
+                img = tifffile.imread(f)
+                img = ensure_3d(img)
+                frames.extend(img)
+
+        elif suffix == ".csv":
+            arr = np.loadtxt(path, delimiter=',')
+            arr = ensure_3d(arr)
+            frames.extend(arr)
+
+        elif suffix == ".sfmov":
+            arr = sfmov.get_data(str(path))
+            arr = ensure_3d(arr)
+            frames.extend(arr)
+
+        elif suffix == ".hcc":
+            hcc_files = sort_files(list(path.parent.glob("*.hcc")))
+            if not hcc_files:
+                raise FileNotFoundError(f"No .hcc files found in folder: {path.parent}")
+            if verbose:
+                print(f"Found {len(hcc_files)} HCC files in folder: {path.parent}")
+            data, _ = read_ir([str(f) for f in hcc_files])
+            data = ensure_3d(data)
+            frames.extend(data)
+
+        elif suffix in [".npy", ".npz"]:
+            data = np.load(path)
+            if isinstance(data, np.lib.npyio.NpzFile):
+                for key in data:
+                    frames.extend(ensure_3d(data[key]))
+                if not frames:
+                    raise ValueError("No arrays found in .npz file.")
+            else:
+                frames.extend(ensure_3d(data))
+
+        else:
+            raise ValueError(f"Unsupported file type: {suffix}")
+
+    # Normalize if requested
+    if normalize:
+        frames = [normalize_frame(f) for f in frames]
+
+    return np.stack(frames, axis=0)
