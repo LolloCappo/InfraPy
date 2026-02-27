@@ -140,3 +140,38 @@ def build_time_vector(n_frames, fps):
         Time vector of shape (n_frames,), in seconds.
     """
     return np.arange(n_frames) / fps
+
+def interpolate_to_match(big_matrix: np.ndarray, small_matrix: np.ndarray, method: str = "bilinear") -> np.ndarray:
+    """
+    Interpolates the smaller matrix so its shape matches the bigger matrix.
+    Works for 2D (H, W) or 3D arrays (N, H, W) or (H, W, C).
+    
+    Parameters:
+        big_matrix (np.ndarray): The reference matrix with the target shape.
+        small_matrix (np.ndarray): The matrix to resize.
+        method (str): Interpolation method. Options: 'nearest', 'bilinear', 'bicubic'.
+    
+    Returns:
+        np.ndarray: Resized version of small_matrix with shape equal to big_matrix.
+    """
+    # Map method to scipy order
+    method_map = {
+        "nearest": 0,
+        "bilinear": 1,
+        "bicubic": 3
+    }
+    if method not in method_map:
+        raise ValueError(f"Invalid method '{method}'. Choose from {list(method_map.keys())}.")
+    
+    # Compute zoom factors for each axis
+    zoom_factors = []
+    for i in range(len(small_matrix.shape)):
+        if i < len(big_matrix.shape):
+            zoom_factors.append(big_matrix.shape[i] / small_matrix.shape[i])
+        else:
+            zoom_factors.append(1.0)  # keep extra dimensions unchanged
+    
+    # Perform interpolation
+    resized_matrix = zoom(small_matrix, zoom_factors, order=method_map[method])
+    
+    return resized_matrix

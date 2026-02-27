@@ -101,6 +101,98 @@ def lock_in_analysis(data, fs, fl, method='fft', band=0.5):
 
     return magnitude, phase
 
+def spectral(data, fs, method="fft", foi=None, segment_length=None, overlap=0.25,
+                         zero_pad=True, apply_window=True, segment=True):
+    """
+    Perform Thermoelasticity analysis using FFT (Welch-style) or Digital Lock-In Correlation (DLIC).
+    
+    Parameters:
+        data : ndarray (frames, height, width)
+        fs : int, sampling frequency
+        method : str, "fft" or "lockin"
+        foi : float, frequency of interest (Hz) [required for lockin]
+        segment_length : int, frames per segment (ignored if segment=False)
+        overlap : float, fraction overlap (0 to <1)
+        zero_pad : bool, whether to zero-pad to next full second
+        apply_window : bool, whether to apply Hann window
+        segment : bool, whether to segment the data (Welch-style)
+    
+    Returns:
+        amplitude_map : ndarray
+            For FFT: amplitude at all frequencies (freq_bins, h, w)
+            For lockin: amplitude map (h, w)
+        freq : ndarray
+            For FFT: frequency array
+            For lockin: array with single value [foi]
+    """
+    frames = data.shape[0]
+
+    # Zero-padding
+    if zero_pad:
+        target_length = int(np.ceil(frames / fs) * fs)
+        if frames < target_length:
+            pad_width = ((0, target_length - frames), (0, 0), (0, 0))
+            data = np.pad(data, pad_width, mode='constant', constant_values=np.nan)
+            frames = target_length
+
+    # Window
+    if apply_window:
+        window = np.hanning(segment_length if segment else frames)
+    else:
+        window = np.ones(segment_length if segment else frames)
+
+    # Segmentation setup
+    if segment:
+        segment_length = int(segment_length)
+        step = int(segment_length * (1 - overlap))
+        if step <= 0:
+            raise ValueError("Overlap too high, step becomes zero or negative.")
+        segments = [(start, start + segment_length) for start in range(0, frames - segment_length + 1, step)]
+    else:
+        segments = [(0, frames)]
+
+    if method == "fft":
+        amplitudes = []
+        for start, end in segments:
+            segment_data = data[start:end]
+            segment_data = segment_data - np.nanmean(segment_data, axis=0)
+            segment_data = segment_data * window[:, None, None]
+
+            fft_segment = np.fft.rfft(segment_data, axis=0)
+            amplitude_segment = np.abs(fft_segment) * 2 / (end - start)
+            amplitudes.append(amplitude_segment)
+
+        amplitude_avg = np.nanmean(amplitudes, axis=0)
+        freq = np.fft.rfftfreq(segment_length if segment else frames, 1/fs)
+        return amplitude_avg, freq
+
+    elif method == "lockin":
+        if foi is None:
+            raise ValueError("foi (frequency of interest) must be provided for lockin method.")
+
+        t = np.arange(segment_length if segment else frames) / fs
+        ref_cos = np.cos(2 * np.pi * foi * t)
+        ref_sin = np.sin(2 * np.pi * foi * t)
+
+        amplitudes = []
+        for start, end in segments:
+            segment_data = data[start:end]
+            segment_data = segment_data - np.nanmean(segment_data, axis=0)
+            segment_data = segment_data * window[:, None, None]
+
+            X = np.nansum(segment_data * ref_cos[:, None, None], axis=0)
+            Y = np.nansum(segment_data * ref_sin[:, None, None], axis=0)
+
+            amplitude = np.sqrt(X**2 + Y**2) * 2 / (end - start)
+            amplitudes.append(amplitude)
+
+        amplitude_avg = np.nanmean(amplitudes, axis=0)
+        return amplitude_avg, np.array([foi])
+
+    else:
+        raise ValueError("Invalid method. Choose 'fft' or 'lockin'.")
+    
+
 def get_strain(eps, configuration=None):
     """
     Calculate equivalent strain from strain-gauge data.
