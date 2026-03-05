@@ -2,10 +2,8 @@ import pandas as pd
 import numpy as np
 import pysfmov as sfmov
 import matplotlib.pyplot as plt
-import TelopsToolbox.utils.image_processing as ip
 from scipy.ndimage import zoom
 from tqdm import tqdm
-from TelopsToolbox.hcc.readIRCam import read_ircam
 
 def ism(map1, map2, *, demean=True, on_fail=np.nan):
     """
