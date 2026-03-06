@@ -1471,14 +1471,13 @@ def show_splash_then_main() -> None:
         splash = QSplashScreen(pix, Qt.WindowStaysOnTopHint)
         splash.show()
         app.processEvents()
+        import time; time.sleep(1.4)
 
-    def _show_main():
-        w = IRViewerPG()
-        w.show()
-        if splash is not None:
-            splash.finish(w)
+    w = IRViewerPG()
+    w.show()
+    if splash is not None:
+        splash.finish(w)
 
-    QTimer.singleShot(1400, _show_main)
     sys.exit(app.exec_())
 
 

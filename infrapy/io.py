@@ -3,12 +3,9 @@ import numpy as np
 import tifffile
 import sdypy.io.sfmov as sfmov
 import pandas as pd
-import numpy as np
 import pysfmov as sfmov
-import TelopsToolbox.utils.image_processing as ip
+from fasthcc import read_hcc
 from tqdm import tqdm
-from TelopsToolbox.hcc.readIRCam import read_ircam
-import numpy as np
 
 
 def read_ir(filenames, skip_frames=1, return_timestamps=False):
@@ -22,7 +19,7 @@ def read_ir(filenames, skip_frames=1, return_timestamps=False):
         return_timestamps (bool): If True, include timestamps from metadata. Defaults to False.
 
     Returns:
-        If `.hcc` files: 
+        If `.hcc` files:
             - combined_data (np.ndarray): A 3D array representing the stack of 2D infrared images.
                                           Shape: (num_frames, height, width).
             - combined_meta_data (pd.DataFrame): Metadata for each frame.
@@ -38,7 +35,7 @@ def read_ir(filenames, skip_frames=1, return_timestamps=False):
     # Initialize storage for `.hcc` files only
     all_data = []
     all_meta_data = []
-    
+
     hcc_files = [f for f in filenames if f.endswith('.hcc')]
     sfmov_files = [f for f in filenames if f.endswith('.sfmov')]
 
@@ -54,21 +51,14 @@ def read_ir(filenames, skip_frames=1, return_timestamps=False):
     # Process `.hcc` files (if any)
     for filename in hcc_files:
         try:
-            frame_data, frame_headers, special_pixels, non_special_pixels = read_ircam(filename)
-            image_stack = []
-            meta_data = pd.DataFrame(frame_headers)
+            frames_slice = slice(None, None, skip_frames) if skip_frames > 1 else None
+            data, meta = read_hcc(filename, frames=frames_slice, metadata=True, calibrated=True)
 
-            for i in tqdm(range(0, len(frame_data), skip_frames), desc=f"Loading frames from {filename}", unit="frame"):
-                this_header = meta_data.iloc[i]
-                processed_image = ip.form_image(this_header, frame_data[i]).squeeze()
-                image_stack.append(processed_image)
-
-            data = np.stack(image_stack)
+            meta_data = pd.DataFrame(meta)
 
             if return_timestamps:
                 meta_data['Formatted_Timestamp'] = pd.to_datetime(meta_data['POSIXTime'], unit='s')
 
-            # Append results to the cumulative lists
             all_data.append(data)
             all_meta_data.append(meta_data)
 
@@ -137,19 +127,8 @@ def save_ir_data(array, filepath, key="data", overwrite=True):
 from pathlib import Path
 import numpy as np
 import tifffile
-
-# External dependencies assumed:
-# - sfmov.get_data(file)
-# - read_ir(files)
-
-from pathlib import Path
-import numpy as np
-import tifffile
 from tqdm import tqdm  # for progress bar
 
-# External dependencies assumed:
-# - sfmov.get_data(file)
-# - read_ir(files)
 
 def load_ir_data(path, sort_by="name", normalize=False, verbose=False):
     """
