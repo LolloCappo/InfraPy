@@ -1,7 +1,6 @@
 from pathlib import Path
 import numpy as np
 import tifffile
-import sdypy.io.sfmov as sfmov
 import pandas as pd
 import pysfmov as sfmov
 from fasthcc import read_hcc
