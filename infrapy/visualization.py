@@ -1,140 +1,136 @@
+from pathlib import Path
+from typing import Optional, Union
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from pathlib import Path
-from ipywidgets import interact, FloatSlider, fixed
-import ipywidgets as widgets
-from infrapy.thermoelasticity import lock_in_analysis
 
-def animate_tsa(magnitude, phase=None, f=10.0, fs=100, n_frames=100, 
-                cmap='viridis', save_path=None, dpi=150, speed_factor=2.0):
+
+def animate_tsa(
+    magnitude: np.ndarray,
+    phase: Optional[np.ndarray] = None,
+    f: float = 10.0,
+    fs: float = 100.0,
+    n_frames: int = 100,
+    cmap: str = "viridis",
+    save_path: Optional[Union[str, Path]] = None,
+    dpi: int = 150,
+    speed_factor: float = 2.0,
+) -> tuple[animation.FuncAnimation, np.ndarray]:
     """
-    Generate and optionally save a synthetic TSA animation (e.g., thermoelastic response).
+    Generate and optionally save a synthetic TSA animation.
 
     Parameters
     ----------
-    magnitude : ndarray [H, W]
+    magnitude : ndarray, shape (H, W)
         Magnitude map from lock-in analysis.
-    phase : ndarray [H, W] or None
-        Phase map in degrees. If None, zero phase is used.
+    phase : ndarray, shape (H, W), optional
+        Phase map in degrees. Defaults to zero phase.
     f : float
-        Frequency of oscillation [Hz].
+        Oscillation frequency [Hz].
     fs : float
         Sampling frequency for frame generation [Hz].
     n_frames : int
-        Total number of frames in the animation.
+        Number of frames in the animation.
     cmap : str
-        Colormap to use for visualization.
-    save_path : str or Path or None
-        If provided, save the animation to this path (.mp4 or .gif).
+        Matplotlib colormap name.
+    save_path : str or Path, optional
+        If given, save the animation (.mp4 or .gif).
     dpi : int
-        Resolution of the output animation.
+        Output resolution.
     speed_factor : float
-        Multiplier to slow down animation playback (higher = slower playback).
+        Playback slow-down multiplier (higher = slower).
 
     Returns
     -------
-    ani : matplotlib.animation.FuncAnimation
-        The animation object.
-    frames : ndarray [n_frames, H, W]
-        Stack of generated frames.
+    ani : FuncAnimation
+    frames : ndarray, shape (n_frames, H, W)
     """
     import warnings
     warnings.filterwarnings("ignore", category=UserWarning)
 
     H, W = magnitude.shape
-    t = np.arange(n_frames) / fs  # time vector
+    t = np.arange(n_frames) / fs
+    phi = np.zeros_like(magnitude, dtype=np.float32) if phase is None else np.deg2rad(phase).astype(np.float32)
 
-    if phase is None:
-        phi = np.zeros_like(magnitude, dtype=np.float32)
-    else:
-        phi = np.deg2rad(phase).astype(np.float32)
-
-    # Generate frame stack
     frames = np.empty((n_frames, H, W), dtype=np.float32)
-    for i, time_point in enumerate(t):
-        frames[i] = magnitude * np.sin(2 * np.pi * f * time_point + phi)
+    for i, tp in enumerate(t):
+        frames[i] = magnitude * np.sin(2 * np.pi * f * tp + phi)
 
-    # Setup figure but don't show
     fig, ax = plt.subplots()
     im = ax.imshow(frames[0], cmap=cmap, animated=True)
-    ax.axis('off')
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label('Signal amplitude')
+    ax.axis("off")
+    fig.colorbar(im, ax=ax).set_label("Signal amplitude")
 
-    def update(frame_idx):
-        im.set_array(frames[frame_idx])
+    def update(idx: int) -> list:
+        im.set_array(frames[idx])
         return [im]
 
-    # Compute adjusted interval for slower playback
     interval_ms = 1000 / fs * speed_factor
-
     ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=interval_ms, blit=True)
 
     if save_path is not None:
         save_path = Path(save_path)
         ext = save_path.suffix.lower()
-        if ext not in ['.mp4', '.gif']:
-            raise ValueError("save_path extension must be .mp4 or .gif")
-        if ext == '.mp4':
-            writer = animation.writers['ffmpeg'](fps=fs / speed_factor, bitrate=1800)
+        if ext not in (".mp4", ".gif"):
+            raise ValueError("save_path must end with .mp4 or .gif")
+        if ext == ".mp4":
+            writer = animation.writers["ffmpeg"](fps=fs / speed_factor, bitrate=1800)
             ani.save(save_path, writer=writer, dpi=dpi)
-        elif ext == '.gif':
-            ani.save(save_path, writer='imagemagick', fps=fs / speed_factor, dpi=dpi)
+        else:
+            ani.save(save_path, writer="imagemagick", fps=fs / speed_factor, dpi=dpi)
 
-    plt.close(fig)  # prevent display
-
+    plt.close(fig)
     return ani, frames
 
 
-def plot_tsa_maps(magnitude, phase, 
-                  cmap_mag='viridis', mag_lim=None, 
-                  cmap_phase='bwr', ph_lim=None, 
-                  title=None):
+def plot_tsa_maps(
+    magnitude: np.ndarray,
+    phase: np.ndarray,
+    cmap_mag: str = "viridis",
+    mag_lim: Optional[tuple[float, float]] = None,
+    cmap_phase: str = "bwr",
+    ph_lim: Optional[tuple[float, float]] = None,
+    title: Optional[str] = None,
+) -> None:
     """
-    Plot TSA magnitude and phase maps side by side with colorbars.
+    Plot TSA magnitude and phase maps side by side.
 
-    Parameters:
-    -----------
-    magnitude : ndarray [H, W]
-        Lock-in magnitude map (e.g., amplitude of oscillation).
-    phase : ndarray [H, W]
+    Parameters
+    ----------
+    magnitude : ndarray, shape (H, W)
+        Lock-in magnitude map.
+    phase : ndarray, shape (H, W)
         Lock-in phase map in degrees.
     cmap_mag : str
-        Colormap for the magnitude map (default: 'viridis').
-    mag_lim : list or tuple [vmin, vmax] or None
-        Color scale limits for the magnitude plot.
+        Colormap for magnitude (default: 'viridis').
+    mag_lim : (vmin, vmax), optional
+        Colour scale limits for magnitude.
     cmap_phase : str
-        Colormap for the phase map (default: 'bwr').
-    ph_lim : list or tuple [vmin, vmax] or None
-        Color scale limits for the phase plot.
-    title : str or None
-        Optional title for the full figure.
+        Colormap for phase (default: 'bwr').
+    ph_lim : (vmin, vmax), optional
+        Colour scale limits for phase. Defaults to (-180, 180).
+    title : str, optional
+        Figure title.
     """
-
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    # Set magnitude limits
-    if mag_lim is None:
-        mag_lim = [np.nanmin(magnitude), np.nanmax(magnitude)]
-    im0 = axes[0].imshow(magnitude, cmap=cmap_mag, vmin=mag_lim[0], vmax=mag_lim[1])
+    vmin_mag = np.nanmin(magnitude) if mag_lim is None else mag_lim[0]
+    vmax_mag = np.nanmax(magnitude) if mag_lim is None else mag_lim[1]
+    im0 = axes[0].imshow(magnitude, cmap=cmap_mag, vmin=vmin_mag, vmax=vmax_mag)
     axes[0].set_title("Magnitude")
     plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
 
-    # Set phase limits
-    if ph_lim is None:
-        ph_lim = [-180, 180]
-    im1 = axes[1].imshow(phase, cmap=cmap_phase, vmin=ph_lim[0], vmax=ph_lim[1])
+    vmin_ph = -180.0 if ph_lim is None else ph_lim[0]
+    vmax_ph = 180.0 if ph_lim is None else ph_lim[1]
+    im1 = axes[1].imshow(phase, cmap=cmap_phase, vmin=vmin_ph, vmax=vmax_ph)
     axes[1].set_title("Phase (degrees)")
     plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
-    # Optional title
     if title:
         fig.suptitle(title, fontsize=14)
 
-    # Hide axes
     for ax in axes:
-        ax.axis('off')
+        ax.axis("off")
 
     plt.tight_layout()
     plt.show()

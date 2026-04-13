@@ -1,5 +1,9 @@
-# Package requirements for users
+# Core dependencies
 numpy>=1.11.0
 scipy>=1.2.0
 matplotlib>=3.0.0
 fasthcc
+tifffile
+pandas
+pysfmov
+tqdm

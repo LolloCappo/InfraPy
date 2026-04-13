@@ -1,4 +1,8 @@
-'''
-The code inside `__main__.py` runs when this module is run from the command line with:
+"""Launch the InfraPy GUI when the package is run as a module.
 
-'''
+Usage:
+    python -m infrapy
+"""
+from infrapy.GUIs.gui import show_splash_then_main
+
+show_splash_then_main()

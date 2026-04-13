@@ -49,7 +49,7 @@ if __name__ == '__main__':
         maintainer_email='lorenzocapponi@outlook.it',
         install_requires=requirements,
         keywords=['infared', 'imaging', 'processing', 'infrared imaging', 'infrared processing'],
-        packages=['infrapy'],
+        packages=['infrapy', 'infrapy.GUIs'],
         classifiers=['Development Status :: 3 - Alpha',
                      'Intended Audience :: Developers',
                      'Programming Language :: Python :: 3.6']
