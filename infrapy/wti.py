@@ -1,6 +1,35 @@
-from typing import Optional
+"""
+Weighted Thermoelastic Identification (WTI).
+
+Fuses C repeated full-field response maps of the same component (e.g. thermoelastic
+amplitude maps acquired under different environmental conditions) into one map. Each
+measurement is weighted by its Image Similarity Metric (ISM) to the current consensus,
+and the consensus is the pixel-wise weighted median of the measurements.
+
+Nothing here is specific to infrared data: any stack of maps shaped (C, H, W) on a
+common grid can be fused (see :func:`stack_maps`).
+
+Typical workflow::
+
+    from infrapy import thermoelasticity, wti
+
+    maps = []
+    for data, fs, foi in acquisitions:              # (frames, H, W) sequences
+        seg = int(data.shape[0] / 4)
+        amp, freq = thermoelasticity.spectral(data, fs, method="fft",
+                                              segment_length=seg, overlap=0.25)
+        maps.append(amp[np.argmin(np.abs(freq - foi))])
+
+    V = wti.stack_maps(maps)
+    reference, weights, history = wti.process_wti(V, max_iter=10)
+    variance_map, residual_map = wti.wti_diagnostics(V, reference)
+"""
+
+from typing import Optional, Sequence
 import numpy as np
 import matplotlib.pyplot as plt
+
+from infrapy.utils import interpolate_to_match
 
 
 def ism(
@@ -54,67 +83,93 @@ def ism(
     return float(np.clip((ab * ab) / (aa * bb), 0.0, 1.0))
 
 
-def weighted_median(ensemble: np.ndarray, weights: np.ndarray) -> float:
+def weighted_median(ensemble: np.ndarray, weights: np.ndarray):
     """
-    Weighted median that ignores NaNs in the ensemble.
+    Weighted median along the first axis, ignoring NaNs.
+
+    At each position, returns the member value ``v`` minimising
+    ``sum_c w_c * |e_c - v|`` over the finite members, with the weights renormalised
+    over those members. Ties go to the first member in ensemble order; positions with
+    no finite member are NaN.
+
+    Vectorised over positions, with the same per-position arithmetic (including
+    summation order) as the original per-pixel implementation, so results are
+    identical to it, ties included.
 
     Parameters
     ----------
-    ensemble : ndarray, shape (C,)
+    ensemble : ndarray, shape (C,) or (C, ...)
     weights : ndarray, shape (C,)
 
     Returns
     -------
-    float
+    float for 1-D input, otherwise ndarray of shape ``ensemble.shape[1:]``.
     """
-    mask = np.isfinite(ensemble)
-    if mask.sum() == 0:
-        return np.nan
+    e = np.asarray(ensemble)
+    w_all = np.asarray(weights)
+    C = e.shape[0]
+    if w_all.shape != (C,):
+        raise ValueError(f"weights must have shape ({C},), got {w_all.shape}")
 
-    e = ensemble[mask]
-    w = weights[mask]
-    w = w / w.sum()
+    flat = e.reshape(C, -1)
+    valid = np.isfinite(flat)
+    n_valid = valid.sum(axis=0)
+    out = np.full(flat.shape[1], np.nan)
 
-    costs = np.array([np.sum(w * np.abs(e - v)) for v in e])
-    return float(e[np.argmin(costs)])
+    # Finite members first, keeping ensemble order, so every group of positions with
+    # the same member count is one contiguous (positions, n) block.
+    order = np.argsort(~valid, axis=0, kind="stable")
+
+    for n in np.unique(n_valid):
+        if n == 0:
+            continue
+        cols = np.flatnonzero(n_valid == n)
+        idx = order[:n, cols].T
+        vals = flat[idx, cols[:, None]]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            w = w_all[idx]
+            w = w / np.sum(w, axis=1, keepdims=True)
+
+            best = vals[:, 0].copy()
+            min_cost = np.full(len(cols), np.inf)
+            for k in range(n):
+                cost = np.sum(w * np.abs(vals - vals[:, k:k + 1]), axis=1)
+                better = cost < min_cost
+                best[better] = vals[better, k]
+                min_cost[better] = cost[better]
+        out[cols] = best
+
+    if e.ndim == 1:
+        return float(out[0])
+    return out.reshape(e.shape[1:])
 
 
-def _weighted_median_map(measurements: np.ndarray, weights: np.ndarray) -> np.ndarray:
+def stack_maps(
+    maps: Sequence[np.ndarray],
+    like: Optional[np.ndarray] = None,
+    method: str = "bilinear",
+) -> np.ndarray:
     """
-    Vectorized weighted median over all pixels simultaneously.
+    Bring maps of possibly different sizes onto one grid and stack them.
 
     Parameters
     ----------
-    measurements : ndarray, shape (C, H, W)
-    weights : ndarray, shape (C,)
+    maps : sequence of ndarray (H_c, W_c)
+        One response map per measurement.
+    like : ndarray (H, W), optional
+        Map whose grid is used (e.g. a laboratory reference). If omitted, the first
+        map sets the grid and is kept unchanged; the others are interpolated to it.
+    method : {'nearest', 'bilinear', 'bicubic'}
+        Interpolation method (see :func:`infrapy.utils.interpolate_to_match`).
 
     Returns
     -------
-    ndarray, shape (H, W)
+    ndarray, shape (C, H, W)
     """
-    C, H, W = measurements.shape
-    finite_mask = np.isfinite(measurements)  # (C, H, W)
-    valid_count = finite_mask.sum(axis=0)    # (H, W)
-
-    # diff[k, c, h, w] = |meas[k, h, w] - meas[c, h, w]|
-    diff = np.abs(measurements[:, np.newaxis] - measurements[np.newaxis, :])  # (C, C, H, W)
-
-    # Zero out pairs where either entry is NaN
-    finite_pair = finite_mask[:, np.newaxis] & finite_mask[np.newaxis, :]  # (C, C, H, W)
-    diff = np.where(finite_pair, diff, 0.0)
-
-    # cost[c, h, w] = sum_k(w[k] * diff[k, c, h, w])
-    cost = np.einsum("k,kchw->chw", weights, diff)  # (C, H, W)
-
-    # Candidates that are NaN get infinite cost
-    cost = np.where(finite_mask, cost, np.inf)
-
-    best_c = np.argmin(cost, axis=0)  # (H, W)
-    h_idx = np.arange(H)[:, np.newaxis]
-    w_idx = np.arange(W)[np.newaxis, :]
-    result = measurements[best_c, h_idx, w_idx]
-
-    return np.where(valid_count > 0, result, np.nan)
+    if like is None:
+        first, rest = maps[0], maps[1:]
+        return np.stack([first] + [interpolate_to_match(first, m, method) for m in rest])
+    return np.stack([interpolate_to_match(like, m, method) for m in maps])
 
 
 def process_wti(
@@ -122,20 +177,30 @@ def process_wti(
     ground_truth: Optional[np.ndarray] = None,
     max_iter: int = 5,
     convergence_threshold: float = 0.99,
+    verbose: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """
-    Multi-Measurement Thermoelastic Response Identification with history tracking.
+    Weighted Thermoelastic Identification with history tracking.
+
+    Iteration 0 is the uniform weighted median. Each following iteration sets
+    ``z_c = ISM(V_c, R) / sum_c ISM(V_c, R)`` and recomputes ``R`` as the weighted
+    median. Stops when ``ISM(R_k, R_{k-1}) >= convergence_threshold`` or after
+    ``max_iter`` weighted iterations.
 
     Parameters
     ----------
     measurements : ndarray, shape (C, H, W)
-        Stack of C measurements.
+        Stack of C measurements on a common grid (see :func:`stack_maps`).
     ground_truth : ndarray, shape (H, W), optional
-        Laboratory reference for validation.
+        Laboratory reference for validation. Only tracked in ``history``; it does not
+        influence the result.
     max_iter : int
-        Maximum number of iterations.
+        Maximum number of weighted iterations.
     convergence_threshold : float
-        ISM threshold for convergence (default 0.99).
+        ISM threshold for convergence (default 0.99). ``1.0`` iterates until the
+        reference stops changing or ``max_iter`` is reached.
+    verbose : bool
+        Print a message on convergence.
 
     Returns
     -------
@@ -148,7 +213,14 @@ def process_wti(
         - 'weights': list of weight arrays at each iteration
         - 'mac_sequential': ISM between consecutive references
         - 'mac_to_ground_truth': ISM to ground truth (if provided)
+
+    Notes
+    -----
+    If ISM is undefined for any measurement (fewer than 2 pixels overlapping the
+    reference, or a constant map), the weight sum is NaN and all weights fall back to
+    uniform for that iteration.
     """
+    measurements = np.asarray(measurements)
     C, H, W = measurements.shape
 
     reference_history: list[np.ndarray] = []
@@ -158,7 +230,7 @@ def process_wti(
 
     # Iteration 0: uniform weights
     weights = np.ones(C) / C
-    reference = _weighted_median_map(measurements, weights)
+    reference = weighted_median(measurements, weights)
 
     reference_history.append(reference.copy())
     weight_history.append(weights.copy())
@@ -173,7 +245,7 @@ def process_wti(
         total = ism_values.sum()
         weights = ism_values / total if total > 0 else np.ones(C) / C
 
-        reference = _weighted_median_map(measurements, weights)
+        reference = weighted_median(measurements, weights)
 
         reference_history.append(reference.copy())
         weight_history.append(weights.copy())
@@ -185,7 +257,8 @@ def process_wti(
             mac_to_ground_truth.append(ism(reference, ground_truth))
 
         if mac_seq >= convergence_threshold:
-            print(f"Converged at iteration {iteration + 1} (ISM = {mac_seq:.4f})")
+            if verbose:
+                print(f"Converged at iteration {iteration + 1} (ISM = {mac_seq:.4f})")
             break
 
     history: dict = {
@@ -227,7 +300,7 @@ def wti_diagnostics(
 def plot_weight_evolution(
     weight_history: list[np.ndarray],
     condition_labels: Optional[list[str]] = None,
-) -> None:
+) -> plt.Figure:
     """
     Plot stacked bar chart of weight evolution across WTI iterations.
 
@@ -235,6 +308,10 @@ def plot_weight_evolution(
     ----------
     weight_history : list of ndarray, each shape (C,)
     condition_labels : list of str, optional
+
+    Returns
+    -------
+    matplotlib.figure.Figure
     """
     C = len(weight_history[0])
     iterations = np.arange(len(weight_history))
@@ -242,8 +319,10 @@ def plot_weight_evolution(
     if condition_labels is None:
         condition_labels = [f"Measurement {i + 1}" for i in range(C)]
 
-    full_palette = plt.cm.inferno_r([0.15, 0.30, 0.45, 0.60, 0.75, 0.90])
-    colors = full_palette[:C]
+    if C <= 6:
+        colors = plt.cm.inferno_r([0.15, 0.30, 0.45, 0.60, 0.75, 0.90])[:C]
+    else:
+        colors = plt.cm.inferno_r(np.linspace(0.15, 0.90, C))
 
     fig, ax = plt.subplots(figsize=(6.4, 4.8))
     bottoms = np.zeros(len(iterations))
@@ -275,3 +354,4 @@ def plot_weight_evolution(
     )
     plt.tight_layout()
     plt.show()
+    return fig
