@@ -20,10 +20,10 @@ sys.path.insert(0, os.path.abspath('../..'))
 
 # -- Project information -----------------------------------------------------
 
-project = 'SDyPy project template'
-copyright = '2021, Janko Slavič, Domen Gorjup, Klemen Zaletelj'
-author = 'Janko Slavič, Domen Gorjup, Klemen Zaletelj'
-one_line_description = 'A template for SDyPy projects.'
+project = 'InfraPy'
+copyright = '2026, Lorenzo Capponi et al.'
+author = 'Lorenzo Capponi et al.'
+one_line_description = 'Python toolkit for infrared image processing and analysis.'
 
 # The short X.Y version
 version = '0.1'
@@ -128,9 +128,9 @@ html_static_path = ['_static']
 htmlhelp_basename = project.lower().replace(' ', '_') + '_doc'
 
 html_theme_options = {
-    "repository_branch": "master",
+    "repository_branch": "main",
     "navigation_with_keys": True,
-    "repository_url": "https://github.com/sdypy/sdypy_template_project",
+    "repository_url": "https://github.com/LolloCappo/InfraPy",
     "use_repository_button": True,
 }
 

@@ -14,7 +14,8 @@ Features
 
 -  **Flexible input support**: image stacks, video files, NumPy arrays, CSV, but also .sfmov and .hcc data directly from FLIR and Telops cameras 
 -  **Temperature tools**: emissivity correction, radiometric-to-temperature conversion
--  **Frequency-domain analysis**: Thermoelastic Stress Analysis via FFT and lock-in correlation analysis 
+-  **Frequency-domain analysis**: Thermoelastic Stress Analysis via FFT and lock-in correlation analysis
+-  **Multi-acquisition fusion**: Weighted Thermoelastic Identification (WTI) combines repeated acquisitions taken under different conditions (e.g. outdoors) into one response map
 -  **Visualization**: ROI monitoring, line profiles, area averages, video animation
 -  **Utility tools**: windowing, unit conversion, SNR calculation, resampling, basic image processing
 -  **Modular design**: clean architecture to support GUI/CLI integration and future analysis modules
@@ -44,6 +45,25 @@ Planned Extensions
 
 Getting Started
 ---------------
+
+Weighted Thermoelastic Identification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Given one amplitude map per acquisition (e.g. from ``thermoelasticity.spectral``), WTI weights
+each acquisition by its Image Similarity Metric (ISM) to the current consensus and takes the
+pixel-wise weighted median, iterating until the consensus stops changing. The maps can come
+from any full-field technique; only a stack of shape ``(C, H, W)`` is needed.
+
+.. code-block:: python
+
+    from infrapy import wti
+
+    V = wti.stack_maps([map_night, map_shadow, map_sun])   # common grid
+    reference, weights, history = wti.process_wti(V, max_iter=10)
+    variance_map, residual_map = wti.wti_diagnostics(V, reference)
+    wti.plot_weight_evolution(history["weights"], ["Night", "Shadow", "Sun"])
+
+See ``examples/Weighted Thermoelastic Identification.ipynb`` for a complete, self-contained example.
 
 **Coming soon**: example notebooks in the ``examples/`` folder for:
 
